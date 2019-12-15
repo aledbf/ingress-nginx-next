@@ -24,17 +24,17 @@ type State struct {
 }
 
 func (i State) Ensure(name types.NamespacedName, ingress *networking.Ingress) StateHolder {
-	if _, ok := i.state[name]; !ok {
-		i.state[name] = StateHolder{
-			Services:   extractServices(ingress),
-			Secrets:    extractSecrets(ingress),
-			Configmaps: make([]types.NamespacedName, 0),
-		}
-		// parse annotations
-		// parse configmaps
+	state, ok := i.state[name]
+	if !ok {
+		i.state[name] = StateHolder{}
+		state = i.state[name]
 	}
 
-	return i.state[name]
+	state.Services = extractServices(ingress)
+	state.Secrets = extractSecrets(ingress)
+	state.Configmaps = make([]types.NamespacedName, 0)
+
+	return state
 }
 
 func (i State) Remove(names ...types.NamespacedName) {
