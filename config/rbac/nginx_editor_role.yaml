@@ -1,0 +1,26 @@
+# permissions to do edit nginxes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nginx-editor-role
+rules:
+- apiGroups:
+  - ingress.ingress-nginx.io
+  resources:
+  - nginxes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ingress.ingress-nginx.io
+  resources:
+  - nginxes/status
+  verbs:
+  - get
+  - patch
+  - update

@@ -1,0 +1,7 @@
+domain: ingress-nginx.io
+repo: k8s.io/ingress-nginx-next
+resources:
+- group: ingress
+  kind: Nginx
+  version: v1beta1
+version: "2"
