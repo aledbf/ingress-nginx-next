@@ -27,6 +27,7 @@ import (
 	"k8s.io/ingress-nginx-next/controllers"
 	"k8s.io/ingress-nginx-next/pkg/ingress"
 	"k8s.io/ingress-nginx-next/pkg/watch"
+	"k8s.io/klog"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	// +kubebuilder:scaffold:imports
@@ -76,10 +77,20 @@ func main() {
 	ingressState := ingress.New()
 
 	events := make(chan watch.Event)
-	stopCh := make(chan struct{})
+	stopCh := ctrl.SetupSignalHandler()
 
 	ow := watch.NewObjectWatcher(events, stopCh, kubeClient)
-	go ow.Run()
+	go func() {
+		for {
+			select {
+			case evt := <-ow.Events:
+				// for now just show a string with event and the configmap
+				klog.Infof("[K8S data change] - reason: %v", evt)
+			case <-stopCh:
+				return
+			}
+		}
+	}()
 
 	if err = (&controllers.IngressReconciler{
 		Client:        mgr.GetClient(),
@@ -94,7 +105,7 @@ func main() {
 	// +kubebuilder:scaffold:builder
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(stopCh); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

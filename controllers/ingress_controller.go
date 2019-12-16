@@ -63,9 +63,10 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, err
 	}
 
-	ingressData := r.IngressState.Ensure(namespacedName, ingress)
-	r.Log.Info("State", "ingress", ingressData)
-	r.ObjectWatcher.AddServices(ingressData.Services)
+	state := r.IngressState.Ensure(namespacedName, ingress)
+	if err := r.ObjectWatcher.AddServices(state.Services); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
