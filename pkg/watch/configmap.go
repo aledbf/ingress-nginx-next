@@ -12,17 +12,8 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-type configmapWatcher interface {
+type ConfigmapWatcher interface {
 	GetConfigMap() (*corev1.ConfigMap, error)
-}
-
-func newConfigmapWatcher(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) (configmapWatcher, error) {
-	w, err := watchConfigmap(key, eventCh, stopCh, client)
-	if err != nil {
-		return nil, err
-	}
-
-	return w, nil
 }
 
 type watcher struct {
@@ -33,14 +24,14 @@ func (w *watcher) GetConfigMap() (*corev1.ConfigMap, error) {
 	return w.object, nil
 }
 
-func watchConfigmap(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) (*watcher, error) {
+func watchConfigmap(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) ConfigmapWatcher {
+	w := &watcher{}
+
 	kubeInformerFactory := kubeinformers.NewFilteredSharedInformerFactory(client, 0, key.Namespace,
 		func(options *metav1.ListOptions) {
 			options.FieldSelector = fields.OneTermEqualSelector("metadata.name", key.Name).String()
 		},
 	)
-
-	w := &watcher{}
 
 	informer := kubeInformerFactory.Core().V1().ConfigMaps().Informer()
 
@@ -96,6 +87,7 @@ func watchConfigmap(key types.NamespacedName, eventCh chan Event, stopCh chan st
 
 	// start the informer in a goroutine
 	go kubeInformerFactory.Start(stopCh)
+	kubeInformerFactory.WaitForCacheSync(stopCh)
 
-	return w, nil
+	return w
 }

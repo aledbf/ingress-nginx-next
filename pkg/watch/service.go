@@ -17,15 +17,6 @@ type ServiceWatcher interface {
 	GetEndpoints() *corev1.Endpoints
 }
 
-func newServiceWatcher(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) (ServiceWatcher, error) {
-	w, err := watchService(key, eventCh, stopCh, client)
-	if err != nil {
-		return nil, err
-	}
-
-	return w, nil
-}
-
 type svcWatcher struct {
 	svc       *corev1.Service
 	endpoints *corev1.Endpoints
@@ -39,14 +30,14 @@ func (w *svcWatcher) GetEndpoints() *corev1.Endpoints {
 	return w.endpoints
 }
 
-func watchService(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) (*svcWatcher, error) {
+func newServiceWatcher(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) ServiceWatcher {
+	w := &svcWatcher{}
+
 	kubeInformerFactory := kubeinformers.NewFilteredSharedInformerFactory(client, 0, key.Namespace,
 		func(options *metav1.ListOptions) {
 			options.FieldSelector = fields.OneTermEqualSelector("metadata.name", key.Name).String()
 		},
 	)
-
-	w := &svcWatcher{}
 
 	svcInformer := kubeInformerFactory.Core().V1().Services().Informer()
 
@@ -84,7 +75,12 @@ func watchService(key types.NamespacedName, eventCh chan Event, stopCh chan stru
 		},
 		UpdateFunc: func(old, cur interface{}) {
 			if cmp.Equal(old, cur,
-				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "ResourceVersion")) {
+				cmpopts.IgnoreFields(metav1.ObjectMeta{},
+					"ResourceVersion",
+					"Annotations",
+				),
+			) {
+
 				return
 			}
 
@@ -156,5 +152,7 @@ func watchService(key types.NamespacedName, eventCh chan Event, stopCh chan stru
 	// start the informer in a goroutine
 	go kubeInformerFactory.Start(stopCh)
 
-	return w, nil
+	kubeInformerFactory.WaitForCacheSync(stopCh)
+
+	return w
 }

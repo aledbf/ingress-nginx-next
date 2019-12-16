@@ -2,6 +2,7 @@ package watch
 
 import (
 	"fmt"
+	"sync"
 
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -21,18 +22,24 @@ type Watcher interface {
 type ObjectWatcher struct {
 	client kubernetes.Interface
 
-	configmaps map[string]*configmapWatcher
+	configmaps map[string]*ConfigmapWatcher
 	services   map[string]*ServiceWatcher
 
 	Events chan Event
 
 	stopCh chan struct{}
+
+	configmapMu *sync.RWMutex
+	serviceMu   *sync.RWMutex
 }
 
 func NewObjectWatcher(events chan Event, stopCh <-chan struct{}, client kubernetes.Interface) *ObjectWatcher {
 	return &ObjectWatcher{
-		configmaps: make(map[string]*configmapWatcher),
+		configmaps: make(map[string]*ConfigmapWatcher),
 		services:   make(map[string]*ServiceWatcher),
+
+		configmapMu: &sync.RWMutex{},
+		serviceMu:   &sync.RWMutex{},
 
 		client: client,
 
@@ -41,31 +48,29 @@ func NewObjectWatcher(events chan Event, stopCh <-chan struct{}, client kubernet
 }
 
 func (ow *ObjectWatcher) AddConfigmap(key types.NamespacedName) error {
+	ow.configmapMu.Lock()
+	defer ow.configmapMu.Unlock()
+
 	if _, exists := ow.configmaps[key.String()]; exists {
 		return nil
 	}
 
-	cm, err := newConfigmapWatcher(key, ow.Events, ow.stopCh, ow.client)
-	if err != nil {
-		return err
-	}
-
+	cm := watchConfigmap(key, ow.Events, ow.stopCh, ow.client)
 	ow.configmaps[key.String()] = &cm
 
 	return nil
 }
 
 func (ow *ObjectWatcher) AddServices(keys []types.NamespacedName) error {
+	ow.serviceMu.Lock()
+	defer ow.serviceMu.Unlock()
+
 	for _, key := range keys {
 		if _, exists := ow.services[key.String()]; exists {
 			continue
 		}
 
-		svc, err := newServiceWatcher(key, ow.Events, ow.stopCh, ow.client)
-		if err != nil {
-			return err
-		}
-
+		svc := newServiceWatcher(key, ow.Events, ow.stopCh, ow.client)
 		ow.services[key.String()] = &svc
 	}
 
@@ -73,6 +78,9 @@ func (ow *ObjectWatcher) AddServices(keys []types.NamespacedName) error {
 }
 
 func (ow *ObjectWatcher) GetService(key types.NamespacedName) (ServiceWatcher, error) {
+	ow.serviceMu.RLock()
+	defer ow.serviceMu.RUnlock()
+
 	if sw, exists := ow.services[key.String()]; exists {
 		return *sw, nil
 	}
@@ -81,6 +89,9 @@ func (ow *ObjectWatcher) GetService(key types.NamespacedName) (ServiceWatcher, e
 }
 
 func (ow *ObjectWatcher) RemoveConfigmap(key types.NamespacedName) error {
+	ow.serviceMu.Lock()
+	defer ow.serviceMu.Unlock()
+
 	if _, exists := ow.configmaps[key.String()]; !exists {
 		return fmt.Errorf("")
 	}
