@@ -47,12 +47,7 @@ type IngressReconciler struct {
 
 func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
-
-	log := r.Log.WithValues("ingress", req.NamespacedName)
-	log.Info("Syncing")
-
 	namespacedName := req.NamespacedName
-
 	ingress := &networking.Ingress{}
 	if err := r.Get(ctx, namespacedName, ingress); err != nil {
 		if apierrors.IsNotFound(err) {

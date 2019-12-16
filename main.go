@@ -81,10 +81,11 @@ func main() {
 
 	ow := watch.NewObjectWatcher(events, stopCh, kubeClient)
 	go func() {
+		// TODO: move this loop to the controller that glues everything and syncs nginx state
 		for {
 			select {
 			case evt := <-ow.Events:
-				// for now just show a string with event and the configmap
+				// for now just show a string with event
 				klog.Infof("[K8S data change] - reason: %v", evt)
 			case <-stopCh:
 				return
