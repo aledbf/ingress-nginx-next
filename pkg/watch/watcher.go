@@ -9,7 +9,9 @@ import (
 
 type Watcher interface {
 	AddConfigmap(key types.NamespacedName) error
+
 	AddService(key types.NamespacedName) error
+	GetService(key types.NamespacedName) *ServiceWatcher
 	AddServices(keys []types.NamespacedName) error
 
 	RemoveConfigmap(key types.NamespacedName) error
@@ -19,8 +21,8 @@ type Watcher interface {
 type ObjectWatcher struct {
 	client kubernetes.Interface
 
-	configmaps map[types.NamespacedName]*configmapWatcher
-	services   map[types.NamespacedName]*serviceWatcher
+	configmaps map[string]*configmapWatcher
+	services   map[string]*ServiceWatcher
 
 	Events chan Event
 
@@ -29,8 +31,8 @@ type ObjectWatcher struct {
 
 func NewObjectWatcher(events chan Event, stopCh <-chan struct{}, client kubernetes.Interface) *ObjectWatcher {
 	return &ObjectWatcher{
-		configmaps: make(map[types.NamespacedName]*configmapWatcher),
-		services:   make(map[types.NamespacedName]*serviceWatcher),
+		configmaps: make(map[string]*configmapWatcher),
+		services:   make(map[string]*ServiceWatcher),
 
 		client: client,
 
@@ -39,7 +41,7 @@ func NewObjectWatcher(events chan Event, stopCh <-chan struct{}, client kubernet
 }
 
 func (ow *ObjectWatcher) AddConfigmap(key types.NamespacedName) error {
-	if _, exists := ow.configmaps[key]; exists {
+	if _, exists := ow.configmaps[key.String()]; exists {
 		return nil
 	}
 
@@ -48,14 +50,14 @@ func (ow *ObjectWatcher) AddConfigmap(key types.NamespacedName) error {
 		return err
 	}
 
-	ow.configmaps[key] = &cm
+	ow.configmaps[key.String()] = &cm
 
 	return nil
 }
 
 func (ow *ObjectWatcher) AddServices(keys []types.NamespacedName) error {
 	for _, key := range keys {
-		if _, exists := ow.services[key]; exists {
+		if _, exists := ow.services[key.String()]; exists {
 			continue
 		}
 
@@ -64,17 +66,25 @@ func (ow *ObjectWatcher) AddServices(keys []types.NamespacedName) error {
 			return err
 		}
 
-		ow.services[key] = &svc
+		ow.services[key.String()] = &svc
 	}
 
 	return nil
 }
 
+func (ow *ObjectWatcher) GetService(key types.NamespacedName) (ServiceWatcher, error) {
+	if sw, exists := ow.services[key.String()]; exists {
+		return *sw, nil
+	}
+
+	return nil, fmt.Errorf("there is no service %v", key)
+}
+
 func (ow *ObjectWatcher) RemoveConfigmap(key types.NamespacedName) error {
-	if _, exists := ow.configmaps[key]; !exists {
+	if _, exists := ow.configmaps[key.String()]; !exists {
 		return fmt.Errorf("")
 	}
 
-	delete(ow.configmaps, key)
+	delete(ow.configmaps, key.String())
 	return nil
 }

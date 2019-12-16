@@ -12,12 +12,12 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-type serviceWatcher interface {
-	GetService() (*corev1.Service, error)
-	GetEndpoints() (*corev1.Endpoints, error)
+type ServiceWatcher interface {
+	GetService() *corev1.Service
+	GetEndpoints() *corev1.Endpoints
 }
 
-func newServiceWatcher(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) (serviceWatcher, error) {
+func newServiceWatcher(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) (ServiceWatcher, error) {
 	w, err := watchService(key, eventCh, stopCh, client)
 	if err != nil {
 		return nil, err
@@ -31,12 +31,12 @@ type svcWatcher struct {
 	endpoints *corev1.Endpoints
 }
 
-func (w *svcWatcher) GetService() (*corev1.Service, error) {
-	return w.svc, nil
+func (w *svcWatcher) GetService() *corev1.Service {
+	return w.svc
 }
 
-func (w *svcWatcher) GetEndpoints() (*corev1.Endpoints, error) {
-	return w.endpoints, nil
+func (w *svcWatcher) GetEndpoints() *corev1.Endpoints {
+	return w.endpoints
 }
 
 func watchService(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) (*svcWatcher, error) {

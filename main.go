@@ -26,8 +26,8 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/ingress-nginx-next/controllers"
 	"k8s.io/ingress-nginx-next/pkg/ingress"
+	"k8s.io/ingress-nginx-next/pkg/profiler"
 	"k8s.io/ingress-nginx-next/pkg/watch"
-	"k8s.io/klog"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	// +kubebuilder:scaffold:imports
@@ -74,23 +74,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	profiler.Register(ctrl.Log)
+
 	ingressState := ingress.New()
 
 	events := make(chan watch.Event)
 	stopCh := ctrl.SetupSignalHandler()
 
 	ow := watch.NewObjectWatcher(events, stopCh, kubeClient)
+
 	go func() {
-		// TODO: move this loop to the controller that glues everything and syncs nginx state
-		for {
-			select {
-			case evt := <-ow.Events:
-				// for now just show a string with event
-				klog.Infof("[K8S data change] - reason: %v", evt)
-			case <-stopCh:
-				return
-			}
-		}
+		(&controllers.SyncController{
+			Client:        mgr.GetClient(),
+			Log:           ctrl.Log.WithName("controllers").WithName("sync"),
+			Scheme:        mgr.GetScheme(),
+			IngressState:  ingressState,
+			ObjectWatcher: ow,
+		}).Run(stopCh)
 	}()
 
 	if err = (&controllers.IngressReconciler{
