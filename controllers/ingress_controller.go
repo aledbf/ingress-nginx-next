@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"k8s.io/ingress-nginx-next/pkg/ingress"
+	"k8s.io/ingress-nginx-next/pkg/watch"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -37,6 +38,8 @@ type IngressReconciler struct {
 	Scheme *runtime.Scheme
 
 	IngressState *ingress.State
+
+	ObjectWatcher *watch.ObjectWatcher
 }
 
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress,verbs=get;list;watch;
@@ -62,6 +65,7 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	ingressData := r.IngressState.Ensure(namespacedName, ingress)
 	r.Log.Info("State", "ingress", ingressData)
+	r.ObjectWatcher.AddServices(ingressData.Services)
 
 	return ctrl.Result{}, nil
 }

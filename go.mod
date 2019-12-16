@@ -4,12 +4,16 @@ go 1.13
 
 require (
 	github.com/go-logr/logr v0.1.0
+	github.com/go-logr/zapr v0.1.1 // indirect
+	github.com/google/go-cmp v0.3.0
+	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/onsi/ginkgo v1.10.1
 	github.com/onsi/gomega v1.7.0
 	k8s.io/api v0.17.0
+	k8s.io/apiextensions-apiserver v0.0.0 // indirect
 	k8s.io/apimachinery v0.17.0
 	k8s.io/client-go v0.17.0
-	k8s.io/kubernetes v1.17.0
+	k8s.io/klog v1.0.0
 	sigs.k8s.io/controller-runtime v0.4.0
 )
 

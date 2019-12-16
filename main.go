@@ -21,10 +21,12 @@ import (
 
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/ingress-nginx-next/controllers"
 	"k8s.io/ingress-nginx-next/pkg/ingress"
+	"k8s.io/ingress-nginx-next/pkg/watch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	// +kubebuilder:scaffold:imports
@@ -65,13 +67,26 @@ func main() {
 		os.Exit(1)
 	}
 
+	kubeClient, err := kubernetes.NewForConfig(ctrl.GetConfigOrDie())
+	if err != nil {
+		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+
 	ingressState := ingress.New()
 
+	events := make(chan watch.Event)
+	stopCh := make(chan struct{})
+
+	ow := watch.NewObjectWatcher(events, stopCh, kubeClient)
+	go ow.Run()
+
 	if err = (&controllers.IngressReconciler{
-		Client:       mgr.GetClient(),
-		Log:          ctrl.Log.WithName("controllers").WithName("ingress"),
-		Scheme:       mgr.GetScheme(),
-		IngressState: ingressState,
+		Client:        mgr.GetClient(),
+		Log:           ctrl.Log.WithName("controllers").WithName("ingress"),
+		Scheme:        mgr.GetScheme(),
+		IngressState:  ingressState,
+		ObjectWatcher: ow,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ingress")
 		os.Exit(1)
