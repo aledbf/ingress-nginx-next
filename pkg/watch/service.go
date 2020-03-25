@@ -13,8 +13,8 @@ import (
 )
 
 type ServiceWatcher interface {
-	GetService() *corev1.Service
-	GetEndpoints() *corev1.Endpoints
+	Definition() *corev1.Service
+	Endpoints() *corev1.Endpoints
 }
 
 type svcWatcher struct {
@@ -22,11 +22,11 @@ type svcWatcher struct {
 	endpoints *corev1.Endpoints
 }
 
-func (w *svcWatcher) GetService() *corev1.Service {
+func (w *svcWatcher) Definition() *corev1.Service {
 	return w.svc
 }
 
-func (w *svcWatcher) GetEndpoints() *corev1.Endpoints {
+func (w *svcWatcher) Endpoints() *corev1.Endpoints {
 	return w.endpoints
 }
 
@@ -80,7 +80,6 @@ func newServiceWatcher(key types.NamespacedName, eventCh chan Event, stopCh chan
 					"Annotations",
 				),
 			) {
-
 				return
 			}
 
@@ -149,9 +148,7 @@ func newServiceWatcher(key types.NamespacedName, eventCh chan Event, stopCh chan
 		DeleteFunc: remove,
 	})
 
-	// start the informer in a goroutine
-	go kubeInformerFactory.Start(stopCh)
-
+	kubeInformerFactory.Start(stopCh)
 	kubeInformerFactory.WaitForCacheSync(stopCh)
 
 	return w

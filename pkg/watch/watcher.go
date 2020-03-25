@@ -85,17 +85,30 @@ func (ow *ObjectWatcher) GetService(key types.NamespacedName) (ServiceWatcher, e
 		return *sw, nil
 	}
 
-	return nil, fmt.Errorf("there is no service %v", key)
+	return nil, fmt.Errorf("service %v does not exists", key)
 }
 
 func (ow *ObjectWatcher) RemoveConfigmap(key types.NamespacedName) error {
-	ow.serviceMu.Lock()
-	defer ow.serviceMu.Unlock()
+	ow.configmapMu.Lock()
+	defer ow.configmapMu.Unlock()
 
 	if _, exists := ow.configmaps[key.String()]; !exists {
-		return fmt.Errorf("")
+		return fmt.Errorf("configmap %v does not exists", key.String())
 	}
 
 	delete(ow.configmaps, key.String())
+	return nil
+}
+
+func (ow *ObjectWatcher) RemoveService(key types.NamespacedName) error {
+	ow.serviceMu.Lock()
+	defer ow.serviceMu.Unlock()
+
+	if _, exists := ow.services[key.String()]; !exists {
+		return fmt.Errorf("configmap %v does not exists", key.String())
+	}
+
+	delete(ow.services, key.String())
+
 	return nil
 }

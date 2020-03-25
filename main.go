@@ -24,12 +24,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
 	"k8s.io/ingress-nginx-next/controllers"
 	"k8s.io/ingress-nginx-next/pkg/ingress"
 	"k8s.io/ingress-nginx-next/pkg/profiler"
 	"k8s.io/ingress-nginx-next/pkg/watch"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	// +kubebuilder:scaffold:imports
 )
 

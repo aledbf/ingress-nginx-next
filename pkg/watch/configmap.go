@@ -24,7 +24,8 @@ func (w *watcher) GetConfigMap() (*corev1.ConfigMap, error) {
 	return w.object, nil
 }
 
-func watchConfigmap(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) ConfigmapWatcher {
+func watchConfigmap(key types.NamespacedName, eventCh chan Event, stopCh chan struct{},
+	client kubernetes.Interface) ConfigmapWatcher {
 	w := &watcher{}
 
 	kubeInformerFactory := kubeinformers.NewFilteredSharedInformerFactory(client, 0, key.Namespace,

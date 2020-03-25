@@ -27,7 +27,7 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
-// SyncController reconciles a Nginx object
+// SyncController reconciles objects related to NGINX
 type SyncController struct {
 	client.Client
 	Log    logr.Logger
@@ -43,17 +43,20 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 		select {
 		case evt := <-r.ObjectWatcher.Events:
 			// for now just show a string with event
-			klog.Infof("[K8S data change] - reason: %v", evt)
+			klog.Infof("[K8S state change] - reason: %v", evt)
 			switch evt.Kind {
 			case "Ingress":
 			case "Service":
+				fallthrough
+			case "Endpoints":
 				svc, err := r.ObjectWatcher.GetService(evt.NamespacedName)
 				if err != nil {
 					klog.Errorf("%v", err)
 				}
 
-				klog.Infof("%v, %v", svc.GetService(), svc.GetEndpoints())
+				klog.Infof("%v, %v", svc.Definition(), svc.Endpoints())
 			case "Configmap":
+			case "Secrets":
 			}
 		case <-stopCh:
 			return
