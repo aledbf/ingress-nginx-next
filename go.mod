@@ -5,9 +5,8 @@ go 1.14
 require (
 	github.com/go-logr/logr v0.1.0
 	github.com/go-logr/zapr v0.1.1 // indirect
-	github.com/google/go-cmp v0.3.0
-	github.com/imdario/mergo v0.3.7 // indirect
-	github.com/onsi/ginkgo v1.11.0
+	github.com/google/go-cmp v0.4.0
+	github.com/onsi/ginkgo v1.12.0
 	github.com/onsi/gomega v1.8.1
 	k8s.io/api v0.17.4
 	k8s.io/apimachinery v0.17.4
