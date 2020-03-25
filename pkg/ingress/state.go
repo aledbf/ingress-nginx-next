@@ -6,10 +6,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+// StateHolder contains information defined in an Ingress object
 type StateHolder struct {
-	Services    []types.NamespacedName
-	Secrets     []networking.IngressTLS
-	Configmaps  []types.NamespacedName
+	Services []types.NamespacedName
+	Secrets  []networking.IngressTLS
+
+	Configmaps []types.NamespacedName
+
 	Annotations interface{}
 }
 

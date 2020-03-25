@@ -86,8 +86,7 @@ func watchConfigmap(key types.NamespacedName, eventCh chan Event, stopCh chan st
 		DeleteFunc: remove,
 	})
 
-	// start the informer in a goroutine
-	go kubeInformerFactory.Start(stopCh)
+	kubeInformerFactory.Start(stopCh)
 	kubeInformerFactory.WaitForCacheSync(stopCh)
 
 	return w
