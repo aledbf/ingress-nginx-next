@@ -18,8 +18,6 @@ package controllers
 import (
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-	"k8s.io/klog"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"k8s.io/ingress-nginx-next/pkg/ingress"
@@ -33,28 +31,30 @@ type SyncController struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	IngressState *ingress.State
+	Dependencies *ingress.Dependencies
 
-	ObjectWatcher *watch.ObjectWatcher
+	ServiceWatcher *watch.ServiceWatcher
+
+	Events chan watch.Event
 }
 
 func (r *SyncController) Run(stopCh <-chan struct{}) {
 	for {
 		select {
-		case evt := <-r.ObjectWatcher.Events:
+		case evt := <-r.Events:
 			// for now just show a string with event
-			klog.Infof("[K8S state change] - reason: %v", evt)
+			r.Log.Info("[K8S state change]", "reason", evt)
 			switch evt.Kind {
 			case "Ingress":
 			case "Service":
 				fallthrough
 			case "Endpoints":
-				svc, err := r.ObjectWatcher.GetService(evt.NamespacedName)
+				_, err := r.ServiceWatcher.GetService(evt.NamespacedName)
 				if err != nil {
-					klog.Errorf("%v", err)
+					r.Log.Error(err, "extracting service information")
 				}
 
-				klog.Infof("%v, %v", svc.Definition(), svc.Endpoints())
+				//klog.Infof("%v, %v", svc.Definition(), svc.Endpoints())
 			case "Configmap":
 			case "Secrets":
 			}

@@ -1,155 +1,206 @@
 package watch
 
 import (
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
+	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/types"
-	kubeinformers "k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
-	cache "k8s.io/client-go/tools/cache"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
+	toolscache "k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-type ServiceWatcher interface {
-	Definition() *corev1.Service
-	Endpoints() *corev1.Endpoints
+type ServiceWatcher struct {
+	events chan Event
+	stopCh chan struct{}
+
+	services  map[string]*corev1.Service
+	serviceMu *sync.RWMutex
+
+	toWatch   sets.String
+	toWatchMu *sync.RWMutex
+
+	mgr manager.Manager
+	log logr.Logger
+
+	reloadQueue workqueue.RateLimitingInterface
 }
 
-type svcWatcher struct {
-	svc       *corev1.Service
-	endpoints *corev1.Endpoints
+func (sw *ServiceWatcher) addService(key types.NamespacedName, svc *corev1.Service) {
+	sw.serviceMu.Lock()
+	defer sw.serviceMu.Unlock()
+
+	sw.services[key.String()] = svc
 }
 
-func (w *svcWatcher) Definition() *corev1.Service {
-	return w.svc
-}
+func (sw *ServiceWatcher) WatchAddServices(keys []types.NamespacedName) error {
+	sw.toWatchMu.RLock()
+	defer sw.toWatchMu.RUnlock()
 
-func (w *svcWatcher) Endpoints() *corev1.Endpoints {
-	return w.endpoints
-}
-
-func newServiceWatcher(key types.NamespacedName, eventCh chan Event, stopCh chan struct{}, client kubernetes.Interface) ServiceWatcher {
-	w := &svcWatcher{}
-
-	kubeInformerFactory := kubeinformers.NewFilteredSharedInformerFactory(client, 0, key.Namespace,
-		func(options *metav1.ListOptions) {
-			options.FieldSelector = fields.OneTermEqualSelector("metadata.name", key.Name).String()
-		},
-	)
-
-	svcInformer := kubeInformerFactory.Core().V1().Services().Informer()
-
-	var remove func(obj interface{})
-	remove = func(obj interface{}) {
-		switch obj := obj.(type) {
-		case cache.DeletedFinalStateUnknown:
-			remove(obj.Obj)
-		default:
-			w.svc = nil
-			w.endpoints = nil
+	for _, key := range keys {
+		if sw.toWatch.Has(key.String()) {
+			continue
 		}
 
-		eventCh <- Event{
-			NamespacedName: key,
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: corev1.SchemeGroupVersion.String(),
-				Kind:       "Service",
-			},
-			Type: RemoveEvent,
-		}
+		sw.toWatch.Insert(key.String())
 	}
 
-	svcInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			w.svc = obj.(*corev1.Service)
-			eventCh <- Event{
-				NamespacedName: key,
+	sw.reloadQueue.Add("svc")
+
+	return nil
+}
+
+func (sw *ServiceWatcher) GetService(key types.NamespacedName) (*corev1.Service, error) {
+	sw.serviceMu.RLock()
+	defer sw.serviceMu.RUnlock()
+
+	if sw, exists := sw.services[key.String()]; exists {
+		return sw, nil
+	}
+
+	return nil, fmt.Errorf("service %v does not exists", key)
+}
+
+func NewServiceWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.Manager) (*ServiceWatcher, error) {
+	sw := &ServiceWatcher{
+		stopCh: make(chan struct{}),
+		events: eventCh,
+
+		services:  make(map[string]*corev1.Service),
+		serviceMu: &sync.RWMutex{},
+
+		mgr: mgr,
+
+		toWatch:   sets.NewString(),
+		toWatchMu: &sync.RWMutex{},
+
+		log: ctrl.Log.WithName("watch").WithName("service"),
+
+		reloadQueue: workqueue.NewNamedRateLimitingQueue(workqueue.NewMaxOfRateLimiter(
+			workqueue.NewItemExponentialFailureRateLimiter(500*time.Millisecond, 1000*time.Second),
+			// 10 qps, 100 bucket size. This is only for retry speed and its
+			// only the overall factor (not per item).
+			&workqueue.BucketRateLimiter{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
+		), "reload"),
+	}
+
+	go wait.Until(sw.runWorker, time.Second, stopCh)
+
+	return sw, nil
+}
+
+func (sw *ServiceWatcher) runWorker() {
+	for sw.processNextItem() {
+	}
+}
+
+func (sw *ServiceWatcher) processNextItem() bool {
+	key, quit := sw.reloadQueue.Get()
+	if quit {
+		return false
+	}
+
+	defer sw.reloadQueue.Done(key)
+
+	close(sw.stopCh)
+	time.Sleep(1 * time.Second)
+
+	sw.stopCh = make(chan struct{})
+
+	err := sw.watch()
+	if err != nil {
+		return false
+	}
+
+	return true
+}
+
+func (sw *ServiceWatcher) watch() error {
+	c, err := controller.NewUnmanaged("service-controller", sw.mgr, controller.Options{
+		Reconciler: reconcile.Func(func(req reconcile.Request) (reconcile.Result, error) {
+			svc := &corev1.Service{}
+			if err := sw.mgr.GetClient().Get(context.TODO(), req.NamespacedName, svc); err != nil {
+				return reconcile.Result{}, errors.Wrap(err, "cannot get service")
+			}
+
+			sw.addService(req.NamespacedName, svc)
+
+			sw.events <- Event{
+				NamespacedName: req.NamespacedName,
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: corev1.SchemeGroupVersion.String(),
 					Kind:       "Service",
 				},
 				Type: AddEvent,
 			}
-		},
-		UpdateFunc: func(old, cur interface{}) {
-			if cmp.Equal(old, cur,
-				cmpopts.IgnoreFields(metav1.ObjectMeta{},
-					"ResourceVersion",
-					"Annotations",
-				),
-			) {
-				return
-			}
 
-			w.svc = cur.(*corev1.Service)
-			eventCh <- Event{
-				NamespacedName: key,
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: corev1.SchemeGroupVersion.String(),
-					Kind:       "Service",
-				},
-				Type: UpdateEvent,
-			}
-		},
-		DeleteFunc: remove,
+			return reconcile.Result{}, nil
+		}),
 	})
-
-	endpointsInformer := kubeInformerFactory.Core().V1().Endpoints().Informer()
-
-	var removeEndpoint func(obj interface{})
-	removeEndpoint = func(obj interface{}) {
-		switch obj := obj.(type) {
-		case cache.DeletedFinalStateUnknown:
-			removeEndpoint(obj.Obj)
-		default:
-			w.endpoints = nil
-		}
-
-		eventCh <- Event{
-			NamespacedName: key,
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: corev1.SchemeGroupVersion.String(),
-				Kind:       "Endpoints",
-			},
-			Type: RemoveEvent,
-		}
+	if err != nil {
+		return err
 	}
 
-	endpointsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			w.endpoints = obj.(*corev1.Endpoints)
-			eventCh <- Event{
-				NamespacedName: key,
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: corev1.SchemeGroupVersion.String(),
-					Kind:       "Endpoints",
-				},
-				Type: AddEvent,
+	err = c.Watch(&source.Kind{Type: &corev1.Service{}}, &handler.EnqueueRequestForObject{}, sw.predicate())
+	if err != nil {
+		close(sw.stopCh)
+		return err
+	}
+
+	go func() {
+		if err := c.Start(sw.stopCh); err != nil {
+			klog.Errorf("Error starting servicewatcher controller: %v", err)
+		}
+	}()
+
+	return nil
+}
+
+func (sw *ServiceWatcher) predicate() predicate.Predicate {
+	sw.toWatchMu.RLock()
+	defer sw.toWatchMu.RUnlock()
+
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			svc, ok := e.Object.(*corev1.Service)
+			if !ok {
+				return false
 			}
+
+			key, err := toolscache.DeletionHandlingMetaNamespaceKeyFunc(svc)
+			if err != nil {
+				return false
+			}
+
+			return sw.toWatch.Has(key)
 		},
-		UpdateFunc: func(old, cur interface{}) {
-			if cmp.Equal(old, cur,
-				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "ResourceVersion")) {
-				return
-			}
-
-			w.endpoints = cur.(*corev1.Endpoints)
-			eventCh <- Event{
-				NamespacedName: key,
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: corev1.SchemeGroupVersion.String(),
-					Kind:       "Endpoints",
-				},
-				Type: UpdateEvent,
-			}
+		GenericFunc: func(e event.GenericEvent) bool {
+			klog.Infof("%v", e.Meta)
+			return false
 		},
-		DeleteFunc: remove,
-	})
-
-	kubeInformerFactory.Start(stopCh)
-	kubeInformerFactory.WaitForCacheSync(stopCh)
-
-	return w
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return false
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			klog.Infof("%v", e.Meta)
+			return false
+		},
+	}
 }

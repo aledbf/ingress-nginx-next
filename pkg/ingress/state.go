@@ -6,64 +6,65 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// StateHolder contains information defined in an Ingress object
-type StateHolder struct {
-	Services []types.NamespacedName
-	Secrets  []networking.IngressTLS
-
-	Configmaps []types.NamespacedName
-
-	Annotations interface{}
+func NewDependenciesHolder() *Dependencies {
+	return &Dependencies{make(map[types.NamespacedName]*Ingress)}
 }
 
-func New() *State {
-	return &State{
-		state: make(map[types.NamespacedName]StateHolder),
-	}
+type Dependencies struct {
+	data map[types.NamespacedName]*Ingress
 }
 
-type State struct {
-	state map[types.NamespacedName]StateHolder
+func (s *Dependencies) Add(name types.NamespacedName, dependencies *Ingress) {
+	s.data[name] = dependencies
 }
 
-func (i State) Ensure(name types.NamespacedName, ingress *networking.Ingress) StateHolder {
-	state, ok := i.state[name]
-	if !ok {
-		i.state[name] = StateHolder{}
-		state = i.state[name]
-	}
-
-	state.Services = extractServices(ingress)
-	state.Secrets = extractSecrets(ingress)
-	state.Configmaps = make([]types.NamespacedName, 0)
-
-	return state
+func (s *Dependencies) Remove(name types.NamespacedName) {
+	delete(s.data, name)
 }
 
-func (i State) Remove(names ...types.NamespacedName) {
-	for _, item := range names {
-		delete(i.state, item)
+// Ingress contains information defined in an Ingress object
+type Ingress struct {
+	Services   []types.NamespacedName `json:"services"`
+	Secrets    []types.NamespacedName `json:"secrets"`
+	Configmaps []types.NamespacedName `json:"configmaps"`
+
+	Annotations interface{} `json:"annotations"`
+}
+
+func Parse(ingress *networking.Ingress) *Ingress {
+	return &Ingress{
+		Services:   extractServices(ingress),
+		Secrets:    extractSecrets(ingress),
+		Configmaps: make([]types.NamespacedName, 0),
 	}
 }
 
 func extractServices(ingress *networking.Ingress) []types.NamespacedName {
-	res := []types.NamespacedName{}
+	services := []types.NamespacedName{}
 	for _, rule := range ingress.Spec.Rules {
 		for _, p := range rule.IngressRuleValue.HTTP.Paths {
-			res = append(res, types.NamespacedName{
+			services = append(services, types.NamespacedName{
 				Namespace: ingress.Namespace,
 				Name:      p.Backend.ServiceName,
 			})
 		}
 	}
 
-	return res
+	return services
 }
 
-func extractSecrets(ingress *networking.Ingress) []networking.IngressTLS {
+func extractSecrets(ingress *networking.Ingress) []types.NamespacedName {
 	if len(ingress.Spec.TLS) == 0 {
-		return make([]networking.IngressTLS, 0)
+		return []types.NamespacedName{}
 	}
 
-	return ingress.Spec.TLS
+	secrets := []types.NamespacedName{}
+	for _, tls := range ingress.Spec.TLS {
+		secrets = append(secrets, types.NamespacedName{
+			Namespace: ingress.Namespace,
+			Name:      tls.SecretName,
+		})
+	}
+
+	return secrets
 }

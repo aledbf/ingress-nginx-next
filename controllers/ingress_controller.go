@@ -22,7 +22,6 @@ import (
 	networking "k8s.io/api/networking/v1beta1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -37,9 +36,9 @@ type IngressReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	IngressState *ingress.State
+	Dependencies *ingress.Dependencies
 
-	ObjectWatcher *watch.ObjectWatcher
+	ServiceWatcher *watch.ServiceWatcher
 }
 
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress,verbs=get;list;watch;
@@ -48,20 +47,24 @@ type IngressReconciler struct {
 func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	namespacedName := req.NamespacedName
-	ingress := &networking.Ingress{}
-	if err := r.Get(ctx, namespacedName, ingress); err != nil {
+	ing := &networking.Ingress{}
+	if err := r.Get(ctx, namespacedName, ing); err != nil {
 		if apierrors.IsNotFound(err) {
-			r.IngressState.Remove(namespacedName)
+			r.Dependencies.Remove(namespacedName)
 			return ctrl.Result{}, nil
 		}
 
 		return ctrl.Result{}, err
 	}
 
-	state := r.IngressState.Ensure(namespacedName, ingress)
-	if err := r.ObjectWatcher.AddServices(state.Services); err != nil {
+	deps := ingress.Parse(ing)
+
+	if err := r.ServiceWatcher.WatchAddServices(deps.Services); err != nil {
 		return ctrl.Result{}, err
 	}
+
+	r.Log.Info("Dependency", "ingress", deps)
+	r.Dependencies.Add(namespacedName, deps)
 
 	return ctrl.Result{}, nil
 }

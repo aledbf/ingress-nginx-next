@@ -23,7 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/klog"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -72,7 +71,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	kubeClient, err := kubernetes.NewForConfig(ctrl.GetConfigOrDie())
+	//kubeClient
+	_, err = kubernetes.NewForConfig(ctrl.GetConfigOrDie())
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -80,38 +80,45 @@ func main() {
 
 	profiler.Register(ctrl.Log)
 
-	ingressState := ingress.New()
+	ingressDeps := ingress.NewDependenciesHolder()
 
 	events := make(chan watch.Event)
 	stopCh := ctrl.SetupSignalHandler()
 
-	ow := watch.NewObjectWatcher(events, stopCh, kubeClient)
-
-	go func() {
-		(&controllers.SyncController{
-			Client:        mgr.GetClient(),
-			Log:           ctrl.Log.WithName("controllers").WithName("sync"),
-			Scheme:        mgr.GetScheme(),
-			IngressState:  ingressState,
-			ObjectWatcher: ow,
-		}).Run(stopCh)
-	}()
+	serviceWatcher, err := watch.NewServiceWatcher(events, stopCh, mgr)
+	if err != nil {
+		setupLog.Error(err, "unable to start service watcher")
+		os.Exit(1)
+	}
 
 	if err = (&controllers.IngressReconciler{
-		Client:        mgr.GetClient(),
-		Log:           ctrl.Log.WithName("controllers").WithName("ingress"),
-		Scheme:        mgr.GetScheme(),
-		IngressState:  ingressState,
-		ObjectWatcher: ow,
+		Client:         mgr.GetClient(),
+		Log:            ctrl.Log.WithName("controllers").WithName("ingress"),
+		Scheme:         mgr.GetScheme(),
+		Dependencies:   ingressDeps,
+		ServiceWatcher: serviceWatcher,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ingress")
 		os.Exit(1)
 	}
-	// +kubebuilder:scaffold:builder
+
+	go func() {
+		(&controllers.SyncController{
+			Client:         mgr.GetClient(),
+			Log:            ctrl.Log.WithName("controllers").WithName("sync"),
+			Scheme:         mgr.GetScheme(),
+			Dependencies:   ingressDeps,
+			ServiceWatcher: serviceWatcher,
+
+			Events: events,
+		}).Run(stopCh)
+	}()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(stopCh); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+
+	// +kubebuilder:scaffold:builder
 }
