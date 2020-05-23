@@ -57,7 +57,7 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(func(o *zap.Options) {
-		o.Development = false
+		o.Development = true
 	}))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
@@ -91,12 +91,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	endpointsWatcher, err := watch.NewEndpointsWatcher(events, stopCh, mgr)
+	if err != nil {
+		setupLog.Error(err, "unable to start endpoints watcher")
+		os.Exit(1)
+	}
+
 	if err = (&controllers.IngressReconciler{
-		Client:         mgr.GetClient(),
-		Log:            ctrl.Log.WithName("controllers").WithName("ingress"),
-		Scheme:         mgr.GetScheme(),
-		Dependencies:   ingressDeps,
-		ServiceWatcher: serviceWatcher,
+		Client:           mgr.GetClient(),
+		Log:              ctrl.Log.WithName("controllers").WithName("ingress"),
+		Scheme:           mgr.GetScheme(),
+		Dependencies:     ingressDeps,
+		ServiceWatcher:   serviceWatcher,
+		EndpointsWatcher: endpointsWatcher,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ingress")
 		os.Exit(1)
@@ -104,11 +111,12 @@ func main() {
 
 	go func() {
 		(&controllers.SyncController{
-			Client:         mgr.GetClient(),
-			Log:            ctrl.Log.WithName("controllers").WithName("sync"),
-			Scheme:         mgr.GetScheme(),
-			Dependencies:   ingressDeps,
-			ServiceWatcher: serviceWatcher,
+			Client:           mgr.GetClient(),
+			Log:              ctrl.Log.WithName("controllers").WithName("sync"),
+			Scheme:           mgr.GetScheme(),
+			Dependencies:     ingressDeps,
+			ServiceWatcher:   serviceWatcher,
+			EndpointsWatcher: endpointsWatcher,
 
 			Events: events,
 		}).Run(stopCh)

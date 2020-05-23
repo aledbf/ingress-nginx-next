@@ -38,7 +38,8 @@ type IngressReconciler struct {
 
 	Dependencies *ingress.Dependencies
 
-	ServiceWatcher *watch.ServiceWatcher
+	ServiceWatcher   *watch.Services
+	EndpointsWatcher *watch.Endpoints
 }
 
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress,verbs=get;list;watch;
@@ -62,6 +63,10 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	deps := ingress.Parse(ing)
 
 	if err := r.ServiceWatcher.Add(deps.Services); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.EndpointsWatcher.Add(deps.Services); err != nil {
 		return ctrl.Result{}, err
 	}
 

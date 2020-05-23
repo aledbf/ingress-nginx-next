@@ -33,7 +33,8 @@ type SyncController struct {
 
 	Dependencies *ingress.Dependencies
 
-	ServiceWatcher *watch.ServiceWatcher
+	ServiceWatcher   *watch.Services
+	EndpointsWatcher *watch.Endpoints
 
 	Events chan watch.Event
 }
@@ -49,12 +50,20 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 			case "Service":
 				fallthrough
 			case "Endpoints":
-				_, err := r.ServiceWatcher.GetService(evt.NamespacedName)
+				svc, err := r.ServiceWatcher.GetService(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting service information")
+					continue
 				}
 
-				//klog.Infof("%v, %v", svc.Definition(), svc.Endpoints())
+				eps, err := r.EndpointsWatcher.GetEndppoints(evt.NamespacedName)
+				if err != nil {
+					r.Log.Error(err, "extracting endpoints information")
+					continue
+				}
+
+				r.Log.Info("Info", "service", svc, "endpoints", eps)
+
 			case "Configmap":
 			case "Secrets":
 			}

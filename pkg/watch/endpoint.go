@@ -26,12 +26,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-type Services struct {
+type Endpoints struct {
 	events chan Event
 	stopCh chan struct{}
 
-	services  map[string]*corev1.Service
-	serviceMu *sync.RWMutex
+	endpoints   map[string]*corev1.Endpoints
+	endpointsMu *sync.RWMutex
 
 	toWatch   sets.String
 	toWatchMu *sync.RWMutex
@@ -42,14 +42,14 @@ type Services struct {
 	reloadQueue workqueue.RateLimitingInterface
 }
 
-func (sw *Services) add(key types.NamespacedName, svc *corev1.Service) {
-	sw.serviceMu.Lock()
-	defer sw.serviceMu.Unlock()
+func (sw *Endpoints) add(key types.NamespacedName, eps *corev1.Endpoints) {
+	sw.endpointsMu.Lock()
+	defer sw.endpointsMu.Unlock()
 
-	sw.services[key.String()] = svc
+	sw.endpoints[key.String()] = eps
 }
 
-func (sw *Services) Add(keys []types.NamespacedName) error {
+func (sw *Endpoints) Add(keys []types.NamespacedName) error {
 	sw.toWatchMu.RLock()
 	defer sw.toWatchMu.RUnlock()
 
@@ -62,12 +62,12 @@ func (sw *Services) Add(keys []types.NamespacedName) error {
 	}
 
 	// reload controller
-	sw.reloadQueue.Add("svc")
+	sw.reloadQueue.Add("endpoint")
 
 	return nil
 }
 
-func (sw *Services) Remove(key types.NamespacedName) error {
+func (sw *Endpoints) Remove(key types.NamespacedName) error {
 	sw.toWatchMu.RLock()
 	defer sw.toWatchMu.RUnlock()
 
@@ -77,43 +77,43 @@ func (sw *Services) Remove(key types.NamespacedName) error {
 
 	sw.toWatch.Delete(key.String())
 	// reload controller
-	sw.reloadQueue.Add("svc")
+	sw.reloadQueue.Add("endpoints")
 
 	return nil
 }
 
-func (sw *Services) GetService(key types.NamespacedName) (*corev1.Service, error) {
-	sw.serviceMu.RLock()
-	defer sw.serviceMu.RUnlock()
+func (sw *Endpoints) GetEndppoints(key types.NamespacedName) (*corev1.Endpoints, error) {
+	sw.endpointsMu.RLock()
+	defer sw.endpointsMu.RUnlock()
 
-	if sw, exists := sw.services[key.String()]; exists {
+	if sw, exists := sw.endpoints[key.String()]; exists {
 		return sw, nil
 	}
 
-	return nil, fmt.Errorf("service %v does not exists", key)
+	return nil, fmt.Errorf("endpoint %v does not exists", key)
 }
 
-func NewServiceWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.Manager) (*Services, error) {
-	sw := &Services{
+func NewEndpointsWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.Manager) (*Endpoints, error) {
+	sw := &Endpoints{
 		stopCh: make(chan struct{}),
 		events: eventCh,
 
-		services:  make(map[string]*corev1.Service),
-		serviceMu: &sync.RWMutex{},
+		endpoints:   make(map[string]*corev1.Endpoints),
+		endpointsMu: &sync.RWMutex{},
 
 		mgr: mgr,
 
 		toWatch:   sets.NewString(),
 		toWatchMu: &sync.RWMutex{},
 
-		log: ctrl.Log.WithName("watch").WithName("services"),
+		log: ctrl.Log.WithName("watch").WithName("endpoints"),
 
 		reloadQueue: workqueue.NewNamedRateLimitingQueue(workqueue.NewMaxOfRateLimiter(
 			workqueue.NewItemExponentialFailureRateLimiter(500*time.Millisecond, 1000*time.Second),
 			// 10 qps, 100 bucket size. This is only for retry speed and its
 			// only the overall factor (not per item).
 			&workqueue.BucketRateLimiter{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
-		), "service-reload"),
+		), "endpoints-reload"),
 	}
 
 	go wait.Until(sw.runWorker, time.Second, stopCh)
@@ -121,12 +121,12 @@ func NewServiceWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.M
 	return sw, nil
 }
 
-func (sw *Services) runWorker() {
+func (sw *Endpoints) runWorker() {
 	for sw.processNextItem() {
 	}
 }
 
-func (sw *Services) processNextItem() bool {
+func (sw *Endpoints) processNextItem() bool {
 	key, quit := sw.reloadQueue.Get()
 	if quit {
 		return false
@@ -134,15 +134,15 @@ func (sw *Services) processNextItem() bool {
 
 	defer sw.reloadQueue.Done(key)
 
-	// stop service-controler
+	// stop endpoints-controler
 	close(sw.stopCh)
 	// create a new stop channel
 	sw.stopCh = make(chan struct{})
 
 	time.Sleep(1 * time.Second)
 
-	// start a new service-controller
-	err := sw.newServiceController()
+	// start a new endpoints-controller
+	err := sw.newEndpointsController()
 	if err != nil {
 		return false
 	}
@@ -150,21 +150,21 @@ func (sw *Services) processNextItem() bool {
 	return true
 }
 
-func (sw *Services) newServiceController() error {
-	c, err := controller.NewUnmanaged("service-controller", sw.mgr, controller.Options{
+func (sw *Endpoints) newEndpointsController() error {
+	c, err := controller.NewUnmanaged("endpoints-controller", sw.mgr, controller.Options{
 		Reconciler: reconcile.Func(func(req reconcile.Request) (reconcile.Result, error) {
-			svc := &corev1.Service{}
-			if err := sw.mgr.GetClient().Get(context.Background(), req.NamespacedName, svc); err != nil {
-				return reconcile.Result{}, errors.Wrap(err, "cannot get service")
+			eps := &corev1.Endpoints{}
+			if err := sw.mgr.GetClient().Get(context.Background(), req.NamespacedName, eps); err != nil {
+				return reconcile.Result{}, errors.Wrap(err, "cannot get endpoints")
 			}
 
-			sw.add(req.NamespacedName, svc)
+			sw.add(req.NamespacedName, eps)
 
 			sw.events <- Event{
 				NamespacedName: req.NamespacedName,
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: corev1.SchemeGroupVersion.String(),
-					Kind:       "Service",
+					Kind:       "Endpoints",
 				},
 				Type: AddEvent,
 			}
@@ -176,7 +176,7 @@ func (sw *Services) newServiceController() error {
 		return err
 	}
 
-	err = c.Watch(&source.Kind{Type: &corev1.Service{}}, &handler.EnqueueRequestForObject{}, sw.predicate())
+	err = c.Watch(&source.Kind{Type: &corev1.Endpoints{}}, &handler.EnqueueRequestForObject{}, sw.predicate())
 	if err != nil {
 		close(sw.stopCh)
 		return err
@@ -191,13 +191,13 @@ func (sw *Services) newServiceController() error {
 	return nil
 }
 
-func (sw *Services) predicate() predicate.Predicate {
+func (sw *Endpoints) predicate() predicate.Predicate {
 	sw.toWatchMu.RLock()
 	defer sw.toWatchMu.RUnlock()
 
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
-			svc, ok := e.Object.(*corev1.Service)
+			svc, ok := e.Object.(*corev1.Endpoints)
 			if !ok {
 				return false
 			}
