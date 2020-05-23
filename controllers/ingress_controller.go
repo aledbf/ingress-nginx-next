@@ -45,6 +45,8 @@ type IngressReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress/status,verbs=get;update;patch
 
 func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+	// TODO: on delete check if the depedencies should be removed (services, secrets, configmaps)
+
 	ctx := context.Background()
 	namespacedName := req.NamespacedName
 	ing := &networking.Ingress{}
