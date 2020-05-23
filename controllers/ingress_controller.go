@@ -61,11 +61,11 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	deps := ingress.Parse(ing)
 
-	if err := r.ServiceWatcher.WatchAddServices(deps.Services); err != nil {
+	if err := r.ServiceWatcher.Add(deps.Services); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	r.Log.Info("Dependency", "ingress", deps)
+	r.Log.Info("Ingress dependencies", "ingress", deps)
 	r.Dependencies.Add(namespacedName, deps)
 
 	return ctrl.Result{}, nil

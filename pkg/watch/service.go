@@ -50,7 +50,7 @@ func (sw *ServiceWatcher) addService(key types.NamespacedName, svc *corev1.Servi
 	sw.services[key.String()] = svc
 }
 
-func (sw *ServiceWatcher) WatchAddServices(keys []types.NamespacedName) error {
+func (sw *ServiceWatcher) Add(keys []types.NamespacedName) error {
 	sw.toWatchMu.RLock()
 	defer sw.toWatchMu.RUnlock()
 
@@ -62,6 +62,22 @@ func (sw *ServiceWatcher) WatchAddServices(keys []types.NamespacedName) error {
 		sw.toWatch.Insert(key.String())
 	}
 
+	// reload controller
+	sw.reloadQueue.Add("svc")
+
+	return nil
+}
+
+func (sw *ServiceWatcher) Remove(key types.NamespacedName) error {
+	sw.toWatchMu.RLock()
+	defer sw.toWatchMu.RUnlock()
+
+	if !sw.toWatch.Has(key.String()) {
+		return nil
+	}
+
+	sw.toWatch.Delete(key.String())
+	// reload controller
 	sw.reloadQueue.Add("svc")
 
 	return nil
