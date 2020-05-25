@@ -50,19 +50,19 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 			case "Service":
 				fallthrough
 			case "Endpoints":
-				svc, err := r.ServiceWatcher.GetService(evt.NamespacedName)
+				svc, err := r.ServiceWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting service information")
 					continue
 				}
 
-				eps, err := r.EndpointsWatcher.GetEndppoints(evt.NamespacedName)
+				eps, err := r.EndpointsWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting endpoints information")
 					continue
 				}
 
-				r.Log.Info("Info", "service", svc, "endpoints", eps)
+				r.Log.Info("Info", "service", svc.UID, "endpoints", eps.UID)
 
 			case "Configmap":
 			case "Secrets":
