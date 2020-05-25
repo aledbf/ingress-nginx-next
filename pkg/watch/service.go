@@ -11,7 +11,7 @@ type Services struct {
 }
 
 func NewServiceWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.Manager) (*Services, error) {
-	sw, err := NewWatcher(&corev1.Service{}, eventCh, mgr)
+	sw, err := NewWatcher("services", &corev1.Service{}, eventCh, mgr)
 	if err != nil {
 		return nil, err
 	}

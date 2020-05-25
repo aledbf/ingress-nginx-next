@@ -18,6 +18,7 @@ package controllers
 import (
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"k8s.io/ingress-nginx-next/pkg/ingress"
@@ -31,7 +32,7 @@ type SyncController struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	Dependencies *ingress.Dependencies
+	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
 	ServiceWatcher   *watch.Services
 	EndpointsWatcher *watch.Endpoints
@@ -44,9 +45,17 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 		select {
 		case evt := <-r.Events:
 			// for now just show a string with event
-			r.Log.Info("[K8S state change]", "reason", evt)
+			r.Log.V(2).Info("[K8S state change]", "reason", evt)
+
 			switch evt.Kind {
+			case "Configmap":
+				fallthrough
 			case "Ingress":
+				// collect ingresses
+				// build model
+				// compare
+				// update
+				// reload
 			case "Service":
 				fallthrough
 			case "Endpoints":
@@ -62,10 +71,17 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 					continue
 				}
 
-				r.Log.Info("Info", "service", svc.UID, "endpoints", eps.UID)
+				r.Log.Info("Info", "service", svc, "endpoints", eps.UID)
 
-			case "Configmap":
+				// supports dynamic updates.
+				// collect all upstreams? or just send this one?
+
+				// upstreams -> service
+				// upstream servers -> endpoints
+
 			case "Secrets":
+				// supports dynamic updates.
+				// collect all secrets? or just send this one?
 			}
 		case <-stopCh:
 			return

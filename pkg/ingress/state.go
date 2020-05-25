@@ -4,26 +4,11 @@ package ingress
 import (
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-func NewDependenciesHolder() *Dependencies {
-	return &Dependencies{make(map[types.NamespacedName]*Ingress)}
-}
-
+// Dependencies contains information defined in an Ingress object
 type Dependencies struct {
-	data map[types.NamespacedName]*Ingress
-}
-
-func (s *Dependencies) Add(name types.NamespacedName, dependencies *Ingress) {
-	s.data[name] = dependencies
-}
-
-func (s *Dependencies) Remove(name types.NamespacedName) {
-	delete(s.data, name)
-}
-
-// Ingress contains information defined in an Ingress object
-type Ingress struct {
 	Services   []types.NamespacedName `json:"services"`
 	Secrets    []types.NamespacedName `json:"secrets"`
 	Configmaps []types.NamespacedName `json:"configmaps"`
@@ -31,12 +16,63 @@ type Ingress struct {
 	Annotations interface{} `json:"annotations"`
 }
 
-func Parse(ingress *networking.Ingress) *Ingress {
-	return &Ingress{
-		Services:   extractServices(ingress),
-		Secrets:    extractSecrets(ingress),
-		Configmaps: make([]types.NamespacedName, 0),
+// Parse extracts information associated to the ingress definition:
+// services, secrets and configmaps that should be watched because
+// they are used in the TLS section or in an annotation
+func Parse(ingress *networking.Ingress) *Dependencies {
+	secrets := extractSecrets(ingress)
+	secrets = append(secrets, secretsFromAnnotations(ingress)...)
+
+	return &Dependencies{
+		Services:    extractServices(ingress),
+		Secrets:     secrets,
+		Configmaps:  configmapsFromAnnotations(ingress),
+		Annotations: extractAnnotations(ingress),
 	}
+}
+
+func extractAnnotations(ingress *networking.Ingress) interface{} {
+	return nil
+}
+
+var configmapAnnotations = sets.NewString(
+	"auth-proxy-set-header",
+	"fastcgi-params-configmap",
+)
+
+func configmapsFromAnnotations(ingress *networking.Ingress) []types.NamespacedName {
+	configmaps := make([]types.NamespacedName, 0)
+	for name := range ingress.GetAnnotations() {
+		if configmapAnnotations.Has(name) {
+			configmaps = append(configmaps, types.NamespacedName{
+				Namespace: ingress.Namespace,
+				Name:      name,
+			})
+		}
+	}
+
+	return configmaps
+}
+
+var secretsAnnotations = sets.NewString(
+	"auth-secret",
+	"auth-tls-secret",
+	"proxy-ssl-secret",
+	"secure-verify-ca-secret",
+)
+
+func secretsFromAnnotations(ingress *networking.Ingress) []types.NamespacedName {
+	secrets := make([]types.NamespacedName, 0)
+	for name := range ingress.GetAnnotations() {
+		if secretsAnnotations.Has(name) {
+			secrets = append(secrets, types.NamespacedName{
+				Namespace: ingress.Namespace,
+				Name:      name,
+			})
+		}
+	}
+
+	return secrets
 }
 
 func extractServices(ingress *networking.Ingress) []types.NamespacedName {

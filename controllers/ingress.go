@@ -22,6 +22,7 @@ import (
 	networking "k8s.io/api/networking/v1beta1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -36,10 +37,10 @@ type IngressReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	Dependencies *ingress.Dependencies
+	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
-	ServiceWatcher   *watch.Services
 	EndpointsWatcher *watch.Endpoints
+	ServiceWatcher   *watch.Services
 }
 
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress,verbs=get;list;watch;
@@ -53,7 +54,7 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ing := &networking.Ingress{}
 	if err := r.Get(ctx, namespacedName, ing); err != nil {
 		if apierrors.IsNotFound(err) {
-			r.Dependencies.Remove(namespacedName)
+			delete(r.Dependencies, namespacedName)
 			return ctrl.Result{}, nil
 		}
 
@@ -71,7 +72,7 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	}
 
 	r.Log.Info("Ingress dependencies", "ingress", deps)
-	r.Dependencies.Add(namespacedName, deps)
+	r.Dependencies[namespacedName] = deps
 
 	return ctrl.Result{}, nil
 }

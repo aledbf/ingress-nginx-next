@@ -11,7 +11,7 @@ type Endpoints struct {
 }
 
 func NewEndpointsWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.Manager) (*Endpoints, error) {
-	ew, err := NewWatcher(&corev1.Endpoints{}, eventCh, mgr)
+	ew, err := NewWatcher("endpoints", &corev1.Endpoints{}, eventCh, mgr)
 	if err != nil {
 		return nil, err
 	}

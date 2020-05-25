@@ -21,6 +21,7 @@ import (
 
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog"
@@ -60,6 +61,8 @@ func main() {
 		o.Development = true
 	}))
 
+	profiler.Register(ctrl.Log)
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:             scheme,
 		MetricsBindAddress: metricsAddr,
@@ -78,9 +81,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	profiler.Register(ctrl.Log)
-
-	ingressDeps := ingress.NewDependenciesHolder()
+	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 
 	events := make(chan watch.Event)
 	stopCh := ctrl.SetupSignalHandler()
@@ -101,7 +102,7 @@ func main() {
 		Client:           mgr.GetClient(),
 		Log:              ctrl.Log.WithName("controllers").WithName("ingress"),
 		Scheme:           mgr.GetScheme(),
-		Dependencies:     ingressDeps,
+		Dependencies:     ingressDependencies,
 		ServiceWatcher:   serviceWatcher,
 		EndpointsWatcher: endpointsWatcher,
 	}).SetupWithManager(mgr); err != nil {
@@ -114,7 +115,7 @@ func main() {
 			Client:           mgr.GetClient(),
 			Log:              ctrl.Log.WithName("controllers").WithName("sync"),
 			Scheme:           mgr.GetScheme(),
-			Dependencies:     ingressDeps,
+			Dependencies:     ingressDependencies,
 			ServiceWatcher:   serviceWatcher,
 			EndpointsWatcher: endpointsWatcher,
 

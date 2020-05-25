@@ -27,6 +27,8 @@ import (
 )
 
 type watcher struct {
+	name string
+
 	events chan Event
 	stopCh chan struct{}
 
@@ -52,8 +54,8 @@ func (w *watcher) addOrUpdate(key types.NamespacedName, svc runtime.Object) {
 }
 
 func (w *watcher) Add(keys []types.NamespacedName) error {
-	w.toWatchMu.RLock()
-	defer w.toWatchMu.RUnlock()
+	w.toWatchMu.Lock()
+	defer w.toWatchMu.Unlock()
 
 	for _, key := range keys {
 		if w.toWatch.Has(key.String()) {
@@ -100,8 +102,10 @@ func (w *watcher) Get(key types.NamespacedName) (runtime.Object, error) {
 	return nil, fmt.Errorf("object %v does not exists", key)
 }
 
-func NewWatcher(runObj runtime.Object, eventCh chan Event, mgr manager.Manager) (*watcher, error) {
+func NewWatcher(name string, runObj runtime.Object, eventCh chan Event, mgr manager.Manager) (*watcher, error) {
 	w := &watcher{
+		name: name,
+
 		runtimeObject: runObj,
 
 		stopCh: make(chan struct{}),
@@ -115,14 +119,14 @@ func NewWatcher(runObj runtime.Object, eventCh chan Event, mgr manager.Manager) 
 		toWatch:   sets.NewString(),
 		toWatchMu: &sync.RWMutex{},
 
-		log: ctrl.Log.WithName("watch").WithName("object"),
+		log: ctrl.Log.WithName("watcher").WithName(name),
 
 		reloadQueue: workqueue.NewNamedRateLimitingQueue(workqueue.NewMaxOfRateLimiter(
 			workqueue.NewItemExponentialFailureRateLimiter(500*time.Millisecond, 1000*time.Second),
 			// 10 qps, 100 bucket size. This is only for retry speed and its
 			// only the overall factor (not per item).
 			&workqueue.BucketRateLimiter{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
-		), "service-reload"),
+		), fmt.Sprintf("%v-queue", name)),
 	}
 
 	return w, nil
@@ -150,7 +154,7 @@ func (w *watcher) processNextItem() bool {
 	// create a new stop channel
 	w.stopCh = make(chan struct{})
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 
 	// start a new service-controller
 	err := w.newServiceController()
@@ -162,21 +166,21 @@ func (w *watcher) processNextItem() bool {
 }
 
 func (w *watcher) newServiceController() error {
-	c, err := controller.NewUnmanaged("watcher-controller", w.mgr, controller.Options{
+	c, err := controller.NewUnmanaged(fmt.Sprintf("%v-controller", w.name), w.mgr, controller.Options{
 		Reconciler: reconcile.Func(func(req reconcile.Request) (reconcile.Result, error) {
 			obj := w.runtimeObject.DeepCopyObject()
-			kind := obj.GetObjectKind()
+			meta := metav1.TypeMeta{
+				Kind:       obj.GetObjectKind().GroupVersionKind().Kind,
+				APIVersion: obj.GetObjectKind().GroupVersionKind().Version,
+			}
 
 			apiError := w.mgr.GetClient().Get(context.Background(), req.NamespacedName, obj)
 			if apiError != nil {
 				if apierrors.IsNotFound(apiError) {
 					w.events <- Event{
 						NamespacedName: req.NamespacedName,
-						TypeMeta: metav1.TypeMeta{
-							APIVersion: kind.GroupVersionKind().Version,
-							Kind:       kind.GroupVersionKind().Kind,
-						},
-						Type: RemoveEvent,
+						Type:           RemoveEvent,
+						TypeMeta:       meta,
 					}
 
 					err := w.Remove(req.NamespacedName)
@@ -189,11 +193,8 @@ func (w *watcher) newServiceController() error {
 			w.addOrUpdate(req.NamespacedName, obj)
 			w.events <- Event{
 				NamespacedName: req.NamespacedName,
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: kind.GroupVersionKind().Version,
-					Kind:       kind.GroupVersionKind().Kind,
-				},
-				Type: AddUpdateEvent,
+				Type:           AddUpdateEvent,
+				TypeMeta:       meta,
 			}
 
 			return reconcile.Result{}, nil
@@ -219,9 +220,6 @@ func (w *watcher) newServiceController() error {
 }
 
 func (w *watcher) predicate() predicate.Predicate {
-	w.toWatchMu.RLock()
-	defer w.toWatchMu.RUnlock()
-
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			return w.shouldWatch(e.Object)
@@ -236,6 +234,9 @@ func (w *watcher) predicate() predicate.Predicate {
 }
 
 func (w *watcher) shouldWatch(obj runtime.Object) bool {
+	w.toWatchMu.RLock()
+	defer w.toWatchMu.RUnlock()
+
 	key, err := toolscache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		return false
