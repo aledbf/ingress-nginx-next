@@ -56,6 +56,11 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ing := &networking.Ingress{}
 	if err := r.Get(ctx, namespacedName, ing); err != nil {
 		if apierrors.IsNotFound(err) {
+			r.ConfigmapWatcher.RemoveReferencedBy(namespacedName)
+			r.EndpointsWatcher.RemoveReferencedBy(namespacedName)
+			r.SecretWatcher.RemoveReferencedBy(namespacedName)
+			r.ServiceWatcher.RemoveReferencedBy(namespacedName)
+
 			delete(r.Dependencies, namespacedName)
 			return ctrl.Result{}, nil
 		}
@@ -65,19 +70,19 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	deps := ingress.Parse(ing)
 
-	if err := r.ConfigmapWatcher.Add(deps.Configmaps); err != nil {
+	if err := r.ConfigmapWatcher.Add(namespacedName, deps.Configmaps); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.EndpointsWatcher.Add(deps.Services); err != nil {
+	if err := r.EndpointsWatcher.Add(namespacedName, deps.Services); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.SecretWatcher.Add(deps.Secrets); err != nil {
+	if err := r.SecretWatcher.Add(namespacedName, deps.Secrets); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.ServiceWatcher.Add(deps.Services); err != nil {
+	if err := r.ServiceWatcher.Add(namespacedName, deps.Services); err != nil {
 		return ctrl.Result{}, err
 	}
 

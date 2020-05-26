@@ -3,28 +3,34 @@ package watch
 import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/ingress-nginx-next/pkg/reference"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 type Configmaps struct {
 	watcher *watcher
+
+	references reference.ObjectRefMap
 }
 
 func NewConfigmapWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.Manager) (*Configmaps, error) {
-	sw, err := NewWatcher("configmaps", &corev1.ConfigMap{}, eventCh, mgr)
+	configmaps := &Configmaps{
+		references: reference.NewObjectRefMap(),
+	}
+	w, err := NewWatcher("configmaps", &corev1.ConfigMap{}, configmaps.isReferenced, eventCh, mgr)
 	if err != nil {
 		return nil, err
 	}
 
-	go sw.Start(stopCh)
+	go w.Start(stopCh)
 
-	return &Configmaps{
-		watcher: sw,
-	}, nil
+	configmaps.watcher = w
+	return configmaps, nil
 }
 
-func (sw *Configmaps) Get(key types.NamespacedName) (*corev1.ConfigMap, error) {
-	obj, err := sw.watcher.Get(key)
+func (cw *Configmaps) Get(key types.NamespacedName) (*corev1.ConfigMap, error) {
+	obj, err := cw.watcher.Get(key)
 	if err != nil {
 		return nil, err
 	}
@@ -33,6 +39,30 @@ func (sw *Configmaps) Get(key types.NamespacedName) (*corev1.ConfigMap, error) {
 	return svc, nil
 }
 
-func (sw *Configmaps) Add(keys []types.NamespacedName) error {
-	return sw.watcher.Add(keys)
+func (cw *Configmaps) Add(ingress types.NamespacedName, configmaps []types.NamespacedName) error {
+	for _, configmap := range configmaps {
+		cw.references.Insert(ingress.String(), configmap.String())
+	}
+
+	return cw.watcher.Add(ingress, configmaps)
+}
+
+func (cw *Configmaps) RemoveReferencedBy(ingress types.NamespacedName) {
+	key := ingress.String()
+	if !cw.references.HasConsumer(key) {
+		// there is no configmap references
+		return
+	}
+
+	configmaps := cw.references.ReferencedBy(key)
+	for _, configmap := range configmaps {
+		//cw.watcher.remove(configmap)
+		cw.references.Delete(configmap)
+	}
+}
+
+func (cw *Configmaps) isReferenced(key types.NamespacedName) bool {
+	ctrl.Log.Info("IsReferenced", "from", "watcher")
+	references := cw.references.Reference(key.String())
+	return len(references) > 1
 }

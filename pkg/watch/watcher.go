@@ -17,7 +17,6 @@ import (
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -45,6 +44,8 @@ type watcher struct {
 	reloadQueue workqueue.RateLimitingInterface
 
 	runtimeObject runtime.Object
+
+	isReferencedFn func(key types.NamespacedName) bool
 }
 
 func (w *watcher) addOrUpdate(key types.NamespacedName, svc runtime.Object) {
@@ -54,7 +55,7 @@ func (w *watcher) addOrUpdate(key types.NamespacedName, svc runtime.Object) {
 	w.watching[key.String()] = svc
 }
 
-func (w *watcher) Add(keys []types.NamespacedName) error {
+func (w *watcher) Add(ingress types.NamespacedName, keys []types.NamespacedName) error {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
 
@@ -72,11 +73,6 @@ func (w *watcher) Add(keys []types.NamespacedName) error {
 	return nil
 }
 
-func (w *watcher) IsReferenced(key types.NamespacedName) bool {
-	w.log.Info("IsReferenced", "from", "watcher")
-	return true
-}
-
 func (w *watcher) remove(key types.NamespacedName) error {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
@@ -88,11 +84,13 @@ func (w *watcher) remove(key types.NamespacedName) error {
 		return nil
 	}
 
-	if !w.IsReferenced(key) {
-		w.log.Info("removing object from watcher", "key", key.String)
-		delete(w.watching, key.String())
-		w.toWatch.Delete(key.String())
+	if w.isReferencedFn(key) {
+		return nil
 	}
+
+	w.log.Info("removing object from watcher", "key", key.String)
+	delete(w.watching, key.String())
+	w.toWatch.Delete(key.String())
 
 	// reload controller
 	w.reloadQueue.Add("dummy")
@@ -111,9 +109,11 @@ func (w *watcher) Get(key types.NamespacedName) (runtime.Object, error) {
 	return nil, fmt.Errorf("object %v does not exists", key)
 }
 
-func NewWatcher(name string, runObj runtime.Object, eventCh chan Event, mgr manager.Manager) (*watcher, error) {
+func NewWatcher(name string, runObj runtime.Object, isReferencedFn func(key types.NamespacedName) bool, eventCh chan Event, mgr manager.Manager) (*watcher, error) {
 	w := &watcher{
 		name: name,
+
+		isReferencedFn: isReferencedFn,
 
 		runtimeObject: runObj,
 
@@ -160,22 +160,27 @@ func (w *watcher) processNextItem() bool {
 
 	// stop service-controler
 	close(w.stopCh)
-
-	time.Sleep(1000 * time.Millisecond)
-
 	// create a new stop channel
 	w.stopCh = make(chan struct{})
 
 	// start a new service-controller
-	err := w.newServiceController()
+	c, err := w.newServiceController()
 	if err != nil {
 		return false
 	}
 
+	go func() {
+		if err := c.Start(w.stopCh); err != nil {
+			w.log.Error(err, fmt.Sprintf("starting %v controller", w.name))
+		}
+	}()
+
+	time.Sleep(1 * time.Second)
+
 	return true
 }
 
-func (w *watcher) newServiceController() error {
+func (w *watcher) newServiceController() (controller.Controller, error) {
 	c, err := controller.NewUnmanaged(fmt.Sprintf("%v-controller", w.name), w.mgr, controller.Options{
 		Reconciler: reconcile.Func(func(req reconcile.Request) (reconcile.Result, error) {
 			obj := w.runtimeObject.DeepCopyObject()
@@ -211,41 +216,45 @@ func (w *watcher) newServiceController() error {
 		}),
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	ca, err := cache.New(w.mgr.GetConfig(), cache.Options{
-		Scheme: w.mgr.GetScheme(),
-		Mapper: w.mgr.GetRESTMapper(),
-	})
-	if err != nil {
-		return err
-	}
+	/*
+		ca, err := cache.New(w.mgr.GetConfig(), cache.Options{
+			Scheme: w.mgr.GetScheme(),
+			Mapper: w.mgr.GetRESTMapper(),
+		})
+		if err != nil {
+			return nil, err
+		}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go ca.Start(ctx.Done())
+		go ca.Start(ctx.Done())
 
-	ca.WaitForCacheSync(w.stopCh)
+		isSyncOk := ca.WaitForCacheSync(w.stopCh)
+		if !isSyncOk {
+			return nil, fmt.Errorf("unexpected error syncing cache")
+		}
 
-	err = c.Watch(source.NewKindWithCache(w.runtimeObject, ca),
+		err = c.Watch(source.NewKindWithCache(w.runtimeObject, ca),
+			&handler.EnqueueRequestForObject{},
+			w.predicate(),
+		)
+		if err != nil {
+			return nil, err
+		}
+	*/
+
+	err = c.Watch(&source.Kind{
+		Type: w.runtimeObject,
+	},
 		&handler.EnqueueRequestForObject{},
 		w.predicate(),
 	)
 	if err != nil {
-		close(w.stopCh)
-		cancel()
-		return err
+		return nil, err
 	}
 
-	go func() {
-		if err := c.Start(w.stopCh); err != nil {
-			w.log.Error(err, "starting controller")
-		}
-
-		cancel()
-	}()
-
-	return nil
+	return c, nil
 }
 
 func (w *watcher) predicate() predicate.Predicate {

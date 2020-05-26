@@ -59,21 +59,22 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 				// update
 				// reload
 			case "Service":
-				fallthrough
-			case "Endpoints":
 				svc, err := r.ServiceWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting service information")
 					continue
 				}
 
+				r.Log.Info("Info", "service", svc)
+
+			case "Endpoints":
 				eps, err := r.EndpointsWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting endpoints information")
 					continue
 				}
 
-				r.Log.Info("Info", "service", svc, "endpoints", eps.UID)
+				r.Log.Info("Info", "endpoints", eps.UID)
 
 				// supports dynamic updates.
 				// collect all upstreams? or just send this one?
@@ -82,6 +83,13 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 				// upstream servers -> endpoints
 
 			case "Secrets":
+				sec, err := r.SecretWatcher.Get(evt.NamespacedName)
+				if err != nil {
+					r.Log.Error(err, "extracting endpoints information")
+					continue
+				}
+
+				r.Log.Info("Info", "secrets", sec.UID)
 				// supports dynamic updates.
 				// collect all secrets? or just send this one?
 			}
