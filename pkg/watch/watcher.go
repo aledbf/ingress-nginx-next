@@ -67,12 +67,17 @@ func (w *watcher) Add(keys []types.NamespacedName) error {
 	}
 
 	// reload controller
-	w.reloadQueue.Add("svc")
+	w.reloadQueue.Add("dummy")
 
 	return nil
 }
 
-func (w *watcher) Remove(key types.NamespacedName) error {
+func (w *watcher) IsReferenced(key types.NamespacedName) bool {
+	w.log.Info("IsReferenced", "from", "watcher")
+	return true
+}
+
+func (w *watcher) remove(key types.NamespacedName) error {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
 
@@ -83,11 +88,14 @@ func (w *watcher) Remove(key types.NamespacedName) error {
 		return nil
 	}
 
-	delete(w.watching, key.String())
+	if !w.IsReferenced(key) {
+		w.log.Info("removing object from watcher", "key", key.String)
+		delete(w.watching, key.String())
+		w.toWatch.Delete(key.String())
+	}
 
-	w.toWatch.Delete(key.String())
 	// reload controller
-	w.reloadQueue.Add("svc")
+	w.reloadQueue.Add("dummy")
 
 	return nil
 }
@@ -185,7 +193,7 @@ func (w *watcher) newServiceController() error {
 						TypeMeta:       meta,
 					}
 
-					err := w.Remove(req.NamespacedName)
+					err := w.remove(req.NamespacedName)
 					return reconcile.Result{}, err
 				}
 

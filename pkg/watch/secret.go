@@ -36,7 +36,3 @@ func (sw *Secrets) Get(key types.NamespacedName) (*corev1.Secret, error) {
 func (sw *Secrets) Add(keys []types.NamespacedName) error {
 	return sw.watcher.Add(keys)
 }
-
-func (sw *Secrets) Remove(key types.NamespacedName) error {
-	return sw.watcher.Remove(key)
-}

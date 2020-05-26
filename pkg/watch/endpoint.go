@@ -36,7 +36,3 @@ func (ew *Endpoints) Get(key types.NamespacedName) (*corev1.Endpoints, error) {
 func (sw *Endpoints) Add(keys []types.NamespacedName) error {
 	return sw.watcher.Add(keys)
 }
-
-func (sw *Endpoints) Remove(key types.NamespacedName) error {
-	return sw.watcher.Remove(key)
-}

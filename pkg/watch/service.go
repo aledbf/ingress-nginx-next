@@ -36,7 +36,3 @@ func (sw *Services) Get(key types.NamespacedName) (*corev1.Service, error) {
 func (sw *Services) Add(keys []types.NamespacedName) error {
 	return sw.watcher.Add(keys)
 }
-
-func (sw *Services) Remove(key types.NamespacedName) error {
-	return sw.watcher.Remove(key)
-}

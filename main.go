@@ -141,9 +141,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager")
+	setupLog.Info("starting ingress controller")
 	if err := mgr.Start(stopCh); err != nil {
-		setupLog.Error(err, "problem running manager")
+		setupLog.Error(err, "problem running ingress controller")
 		os.Exit(1)
 	}
 

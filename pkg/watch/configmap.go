@@ -36,7 +36,3 @@ func (sw *Configmaps) Get(key types.NamespacedName) (*corev1.ConfigMap, error) {
 func (sw *Configmaps) Add(keys []types.NamespacedName) error {
 	return sw.watcher.Add(keys)
 }
-
-func (sw *Configmaps) Remove(key types.NamespacedName) error {
-	return sw.watcher.Remove(key)
-}
