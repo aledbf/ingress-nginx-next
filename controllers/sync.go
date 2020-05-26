@@ -34,8 +34,10 @@ type SyncController struct {
 
 	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
-	ServiceWatcher   *watch.Services
+	ConfigmapWatcher *watch.Configmaps
 	EndpointsWatcher *watch.Endpoints
+	SecretWatcher    *watch.Secrets
+	ServiceWatcher   *watch.Services
 
 	Events chan watch.Event
 }

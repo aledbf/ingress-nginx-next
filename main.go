@@ -86,9 +86,9 @@ func main() {
 	events := make(chan watch.Event)
 	stopCh := ctrl.SetupSignalHandler()
 
-	serviceWatcher, err := watch.NewServiceWatcher(events, stopCh, mgr)
+	configmapWatcher, err := watch.NewConfigmapWatcher(events, stopCh, mgr)
 	if err != nil {
-		setupLog.Error(err, "unable to start service watcher")
+		setupLog.Error(err, "unable to start configmap watcher")
 		os.Exit(1)
 	}
 
@@ -98,30 +98,48 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.IngressReconciler{
-		Client:           mgr.GetClient(),
-		Log:              ctrl.Log.WithName("controllers").WithName("ingress"),
-		Scheme:           mgr.GetScheme(),
-		Dependencies:     ingressDependencies,
-		ServiceWatcher:   serviceWatcher,
-		EndpointsWatcher: endpointsWatcher,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ingress")
+	secretWatcher, err := watch.NewSecretWatcher(events, stopCh, mgr)
+	if err != nil {
+		setupLog.Error(err, "unable to start secret watcher")
+		os.Exit(1)
+	}
+
+	serviceWatcher, err := watch.NewServiceWatcher(events, stopCh, mgr)
+	if err != nil {
+		setupLog.Error(err, "unable to start service watcher")
 		os.Exit(1)
 	}
 
 	go func() {
 		(&controllers.SyncController{
-			Client:           mgr.GetClient(),
-			Log:              ctrl.Log.WithName("controllers").WithName("sync"),
-			Scheme:           mgr.GetScheme(),
-			Dependencies:     ingressDependencies,
-			ServiceWatcher:   serviceWatcher,
+			Client:       mgr.GetClient(),
+			Log:          ctrl.Log.WithName("controllers").WithName("sync"),
+			Scheme:       mgr.GetScheme(),
+			Dependencies: ingressDependencies,
+
+			ConfigmapWatcher: configmapWatcher,
 			EndpointsWatcher: endpointsWatcher,
+			SecretWatcher:    secretWatcher,
+			ServiceWatcher:   serviceWatcher,
 
 			Events: events,
 		}).Run(stopCh)
 	}()
+
+	if err = (&controllers.IngressReconciler{
+		Client:       mgr.GetClient(),
+		Log:          ctrl.Log.WithName("controllers").WithName("ingress"),
+		Scheme:       mgr.GetScheme(),
+		Dependencies: ingressDependencies,
+
+		ConfigmapWatcher: configmapWatcher,
+		EndpointsWatcher: endpointsWatcher,
+		SecretWatcher:    secretWatcher,
+		ServiceWatcher:   serviceWatcher,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ingress")
+		os.Exit(1)
+	}
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(stopCh); err != nil {

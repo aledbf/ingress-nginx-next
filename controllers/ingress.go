@@ -39,7 +39,9 @@ type IngressReconciler struct {
 
 	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
+	ConfigmapWatcher *watch.Configmaps
 	EndpointsWatcher *watch.Endpoints
+	SecretWatcher    *watch.Secrets
 	ServiceWatcher   *watch.Services
 }
 
@@ -63,11 +65,19 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	deps := ingress.Parse(ing)
 
-	if err := r.ServiceWatcher.Add(deps.Services); err != nil {
+	if err := r.ConfigmapWatcher.Add(deps.Configmaps); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	if err := r.EndpointsWatcher.Add(deps.Services); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.SecretWatcher.Add(deps.Secrets); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.ServiceWatcher.Add(deps.Services); err != nil {
 		return ctrl.Result{}, err
 	}
 

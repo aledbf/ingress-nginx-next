@@ -17,6 +17,7 @@ import (
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -151,10 +152,11 @@ func (w *watcher) processNextItem() bool {
 
 	// stop service-controler
 	close(w.stopCh)
+
+	time.Sleep(1000 * time.Millisecond)
+
 	// create a new stop channel
 	w.stopCh = make(chan struct{})
-
-	time.Sleep(100 * time.Millisecond)
 
 	// start a new service-controller
 	err := w.newServiceController()
@@ -169,12 +171,12 @@ func (w *watcher) newServiceController() error {
 	c, err := controller.NewUnmanaged(fmt.Sprintf("%v-controller", w.name), w.mgr, controller.Options{
 		Reconciler: reconcile.Func(func(req reconcile.Request) (reconcile.Result, error) {
 			obj := w.runtimeObject.DeepCopyObject()
+			apiError := w.mgr.GetClient().Get(context.Background(), req.NamespacedName, obj)
 			meta := metav1.TypeMeta{
 				Kind:       obj.GetObjectKind().GroupVersionKind().Kind,
 				APIVersion: obj.GetObjectKind().GroupVersionKind().Version,
 			}
 
-			apiError := w.mgr.GetClient().Get(context.Background(), req.NamespacedName, obj)
 			if apiError != nil {
 				if apierrors.IsNotFound(apiError) {
 					w.events <- Event{
@@ -204,9 +206,26 @@ func (w *watcher) newServiceController() error {
 		return err
 	}
 
-	err = c.Watch(&source.Kind{Type: w.runtimeObject}, &handler.EnqueueRequestForObject{}, w.predicate())
+	ca, err := cache.New(w.mgr.GetConfig(), cache.Options{
+		Scheme: w.mgr.GetScheme(),
+		Mapper: w.mgr.GetRESTMapper(),
+	})
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go ca.Start(ctx.Done())
+
+	ca.WaitForCacheSync(w.stopCh)
+
+	err = c.Watch(source.NewKindWithCache(w.runtimeObject, ca),
+		&handler.EnqueueRequestForObject{},
+		w.predicate(),
+	)
 	if err != nil {
 		close(w.stopCh)
+		cancel()
 		return err
 	}
 
@@ -214,6 +233,8 @@ func (w *watcher) newServiceController() error {
 		if err := c.Start(w.stopCh); err != nil {
 			w.log.Error(err, "starting controller")
 		}
+
+		cancel()
 	}()
 
 	return nil
