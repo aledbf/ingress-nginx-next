@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -45,17 +46,17 @@ type watcher struct {
 
 	runtimeObject runtime.Object
 
-	isReferencedFn func(key types.NamespacedName) bool
+	isReferencedFn func(key string) bool
 }
 
-func (w *watcher) addOrUpdate(key types.NamespacedName, svc runtime.Object) {
+func (w *watcher) addOrUpdate(key string, svc runtime.Object) {
 	w.watcherMu.Lock()
 	defer w.watcherMu.Unlock()
 
-	w.watching[key.String()] = svc
+	w.watching[key] = svc
 }
 
-func (w *watcher) Add(ingress types.NamespacedName, keys []types.NamespacedName) error {
+func (w *watcher) Add(ingress string, keys []types.NamespacedName) error {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
 
@@ -73,24 +74,25 @@ func (w *watcher) Add(ingress types.NamespacedName, keys []types.NamespacedName)
 	return nil
 }
 
-func (w *watcher) remove(key types.NamespacedName) error {
+func (w *watcher) remove(key string) error {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
 
 	w.watcherMu.Lock()
 	defer w.watcherMu.Unlock()
 
-	if !w.toWatch.Has(key.String()) {
+	if !w.toWatch.Has(key) {
 		return nil
 	}
+
+	w.log.Info("removing object from watcher", "key", key)
+	delete(w.watching, key)
 
 	if w.isReferencedFn(key) {
 		return nil
 	}
 
-	w.log.Info("removing object from watcher", "key", key.String)
-	delete(w.watching, key.String())
-	w.toWatch.Delete(key.String())
+	w.toWatch.Delete(key)
 
 	// reload controller
 	w.reloadQueue.Add("dummy")
@@ -98,18 +100,18 @@ func (w *watcher) remove(key types.NamespacedName) error {
 	return nil
 }
 
-func (w *watcher) Get(key types.NamespacedName) (runtime.Object, error) {
+func (w *watcher) Get(key string) (runtime.Object, error) {
 	w.watcherMu.RLock()
 	defer w.watcherMu.RUnlock()
 
-	if obj, exists := w.watching[key.String()]; exists {
+	if obj, exists := w.watching[key]; exists {
 		return obj, nil
 	}
 
 	return nil, fmt.Errorf("object %v does not exists", key)
 }
 
-func NewWatcher(name string, runObj runtime.Object, isReferencedFn func(key types.NamespacedName) bool, eventCh chan Event, mgr manager.Manager) (*watcher, error) {
+func NewWatcher(name string, runObj runtime.Object, isReferencedFn func(key string) bool, eventCh chan Event, mgr manager.Manager) (*watcher, error) {
 	w := &watcher{
 		name: name,
 
@@ -198,14 +200,14 @@ func (w *watcher) newServiceController() (controller.Controller, error) {
 						TypeMeta:       meta,
 					}
 
-					err := w.remove(req.NamespacedName)
+					err := w.remove(req.NamespacedName.String())
 					return reconcile.Result{}, err
 				}
 
 				return reconcile.Result{}, apiError
 			}
 
-			w.addOrUpdate(req.NamespacedName, obj)
+			w.addOrUpdate(req.NamespacedName.String(), obj)
 			w.events <- Event{
 				NamespacedName: req.NamespacedName,
 				Type:           AddUpdateEvent,
@@ -218,31 +220,6 @@ func (w *watcher) newServiceController() (controller.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	/*
-		ca, err := cache.New(w.mgr.GetConfig(), cache.Options{
-			Scheme: w.mgr.GetScheme(),
-			Mapper: w.mgr.GetRESTMapper(),
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		go ca.Start(ctx.Done())
-
-		isSyncOk := ca.WaitForCacheSync(w.stopCh)
-		if !isSyncOk {
-			return nil, fmt.Errorf("unexpected error syncing cache")
-		}
-
-		err = c.Watch(source.NewKindWithCache(w.runtimeObject, ca),
-			&handler.EnqueueRequestForObject{},
-			w.predicate(),
-		)
-		if err != nil {
-			return nil, err
-		}
-	*/
 
 	err = c.Watch(&source.Kind{
 		Type: w.runtimeObject,
@@ -281,4 +258,9 @@ func (w *watcher) shouldWatch(obj runtime.Object) bool {
 	}
 
 	return w.toWatch.Has(key)
+}
+
+func makeNamespacedName(key string) types.NamespacedName {
+	namespace, name, _ := cache.SplitMetaNamespaceKey(key)
+	return types.NamespacedName{Namespace: namespace, Name: name}
 }

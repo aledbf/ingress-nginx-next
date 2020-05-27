@@ -4,7 +4,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/ingress-nginx-next/pkg/reference"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -30,7 +29,7 @@ func NewServiceWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.M
 }
 
 func (sw *Services) Get(key types.NamespacedName) (*corev1.Service, error) {
-	obj, err := sw.watcher.Get(key)
+	obj, err := sw.watcher.Get(key.String())
 	if err != nil {
 		return nil, err
 	}
@@ -40,29 +39,28 @@ func (sw *Services) Get(key types.NamespacedName) (*corev1.Service, error) {
 }
 
 func (sw *Services) Add(ingress types.NamespacedName, services []types.NamespacedName) error {
-	for _, configmap := range services {
-		sw.references.Insert(ingress.String(), configmap.String())
+	for _, service := range services {
+		sw.references.Insert(ingress.String(), service.String())
 	}
 
-	return sw.watcher.Add(ingress, services)
+	return sw.watcher.Add(ingress.String(), services)
 }
 
 func (sw *Services) RemoveReferencedBy(ingress types.NamespacedName) {
 	key := ingress.String()
 	if !sw.references.HasConsumer(key) {
-		// there is no configmap references
+		// there is no service references
 		return
 	}
 
 	services := sw.references.ReferencedBy(key)
-	for _, configmap := range services {
-		//cw.watcher.remove(configmap)
-		sw.references.Delete(configmap)
+	for _, service := range services {
+		sw.watcher.remove(service)
+		sw.references.Delete(service)
 	}
 }
 
-func (sw *Services) isReferenced(key types.NamespacedName) bool {
-	ctrl.Log.Info("IsReferenced", "from", "Services")
-	references := sw.references.Reference(key.String())
-	return len(references) > 1
+func (sw *Services) isReferenced(key string) bool {
+	references := sw.references.Reference(key)
+	return len(references) > 0
 }

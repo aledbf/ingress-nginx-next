@@ -26,7 +26,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"k8s.io/ingress-nginx-next/pkg/ingress"
+	ingressutil "k8s.io/ingress-nginx-next/pkg/ingress"
 	"k8s.io/ingress-nginx-next/pkg/watch"
 	// +kubebuilder:scaffold:imports
 )
@@ -37,7 +37,7 @@ type IngressReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	Dependencies map[types.NamespacedName]*ingress.Dependencies
+	Dependencies map[types.NamespacedName]*ingressutil.Dependencies
 
 	ConfigmapWatcher *watch.Configmaps
 	EndpointsWatcher *watch.Endpoints
@@ -51,43 +51,45 @@ type IngressReconciler struct {
 func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	// TODO: on delete check if the depedencies should be removed (services, secrets, configmaps)
 
-	ctx := context.Background()
-	namespacedName := req.NamespacedName
-	ing := &networking.Ingress{}
-	if err := r.Get(ctx, namespacedName, ing); err != nil {
-		if apierrors.IsNotFound(err) {
-			r.ConfigmapWatcher.RemoveReferencedBy(namespacedName)
-			r.EndpointsWatcher.RemoveReferencedBy(namespacedName)
-			r.SecretWatcher.RemoveReferencedBy(namespacedName)
-			r.ServiceWatcher.RemoveReferencedBy(namespacedName)
+	ingress := req.NamespacedName
 
-			delete(r.Dependencies, namespacedName)
+	ing := &networking.Ingress{}
+
+	ctx := context.Background()
+	if err := r.Get(ctx, ingress, ing); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.ConfigmapWatcher.RemoveReferencedBy(ingress)
+			r.EndpointsWatcher.RemoveReferencedBy(ingress)
+			r.SecretWatcher.RemoveReferencedBy(ingress)
+			r.ServiceWatcher.RemoveReferencedBy(ingress)
+
+			delete(r.Dependencies, ingress)
 			return ctrl.Result{}, nil
 		}
 
 		return ctrl.Result{}, err
 	}
 
-	deps := ingress.Parse(ing)
+	deps := ingressutil.Parse(ing)
 
-	if err := r.ConfigmapWatcher.Add(namespacedName, deps.Configmaps); err != nil {
+	if err := r.ConfigmapWatcher.Add(ingress, deps.Configmaps); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.EndpointsWatcher.Add(namespacedName, deps.Services); err != nil {
+	if err := r.EndpointsWatcher.Add(ingress, deps.Services); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.SecretWatcher.Add(namespacedName, deps.Secrets); err != nil {
+	if err := r.SecretWatcher.Add(ingress, deps.Secrets); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.ServiceWatcher.Add(namespacedName, deps.Services); err != nil {
+	if err := r.ServiceWatcher.Add(ingress, deps.Services); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	r.Log.Info("Ingress dependencies", "ingress", deps)
-	r.Dependencies[namespacedName] = deps
+	r.Dependencies[ingress] = deps
 
 	return ctrl.Result{}, nil
 }
