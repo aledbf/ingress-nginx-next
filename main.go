@@ -21,7 +21,6 @@ import (
 
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog"
@@ -52,13 +51,16 @@ func main() {
 
 	var metricsAddr string
 	var enableLeaderElection bool
+	var development bool
+
+	flag.BoolVar(&development, "development-log", false, "Configure logs in development format.")
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(func(o *zap.Options) {
-		o.Development = true
+		o.Development = development
 	}))
 
 	profiler.Register(ctrl.Log)
@@ -80,8 +82,6 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
-
-	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 
 	events := make(chan watch.Event)
 	stopCh := ctrl.SetupSignalHandler()
@@ -109,6 +109,8 @@ func main() {
 		setupLog.Error(err, "unable to start service watcher")
 		os.Exit(1)
 	}
+
+	ingressDependencies := make(map[string]*ingress.Dependencies)
 
 	go func() {
 		(&controllers.SyncController{
