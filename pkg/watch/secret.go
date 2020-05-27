@@ -2,7 +2,6 @@ package watch
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/ingress-nginx-next/pkg/reference"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -28,8 +27,8 @@ func NewSecretWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.Ma
 	return secrets, nil
 }
 
-func (sw *Secrets) Get(key types.NamespacedName) (*corev1.Secret, error) {
-	obj, err := sw.watcher.Get(key.String())
+func (sw *Secrets) Get(key string) (*corev1.Secret, error) {
+	obj, err := sw.watcher.Get(key)
 	if err != nil {
 		return nil, err
 	}
@@ -38,22 +37,21 @@ func (sw *Secrets) Get(key types.NamespacedName) (*corev1.Secret, error) {
 	return svc, nil
 }
 
-func (sw *Secrets) Add(ingress types.NamespacedName, secrets []types.NamespacedName) error {
+func (sw *Secrets) Add(ingress string, secrets []string) {
 	for _, secret := range secrets {
-		sw.references.Insert(ingress.String(), secret.String())
+		sw.references.Insert(ingress, secret)
 	}
 
-	return sw.watcher.Add(ingress.String(), secrets)
+	sw.watcher.Add(ingress, secrets)
 }
 
-func (sw *Secrets) RemoveReferencedBy(ingress types.NamespacedName) {
-	key := ingress.String()
-	if !sw.references.HasConsumer(key) {
+func (sw *Secrets) RemoveReferencedBy(ingress string) {
+	if !sw.references.HasConsumer(ingress) {
 		// there is no secret references
 		return
 	}
 
-	secrets := sw.references.ReferencedBy(key)
+	secrets := sw.references.ReferencedBy(ingress)
 	for _, secret := range secrets {
 		sw.watcher.remove(secret)
 		sw.references.Delete(secret)

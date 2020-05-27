@@ -22,7 +22,6 @@ import (
 	networking "k8s.io/api/networking/v1beta1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -37,7 +36,7 @@ type IngressReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	Dependencies map[types.NamespacedName]*ingressutil.Dependencies
+	Dependencies map[string]*ingressutil.Dependencies
 
 	ConfigmapWatcher *watch.Configmaps
 	EndpointsWatcher *watch.Endpoints
@@ -49,14 +48,12 @@ type IngressReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress/status,verbs=get;update;patch
 
 func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	// TODO: on delete check if the depedencies should be removed (services, secrets, configmaps)
-
-	ingress := req.NamespacedName
+	ingress := req.NamespacedName.String()
 
 	ing := &networking.Ingress{}
 
 	ctx := context.Background()
-	if err := r.Get(ctx, ingress, ing); err != nil {
+	if err := r.Get(ctx, req.NamespacedName, ing); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.ConfigmapWatcher.RemoveReferencedBy(ingress)
 			r.EndpointsWatcher.RemoveReferencedBy(ingress)
@@ -72,23 +69,12 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	deps := ingressutil.Parse(ing)
 
-	if err := r.ConfigmapWatcher.Add(ingress, deps.Configmaps); err != nil {
-		return ctrl.Result{}, err
-	}
+	r.ConfigmapWatcher.Add(ingress, deps.Configmaps)
+	r.EndpointsWatcher.Add(ingress, deps.Services)
+	r.SecretWatcher.Add(ingress, deps.Secrets)
+	r.ServiceWatcher.Add(ingress, deps.Services)
 
-	if err := r.EndpointsWatcher.Add(ingress, deps.Services); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if err := r.SecretWatcher.Add(ingress, deps.Secrets); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if err := r.ServiceWatcher.Add(ingress, deps.Services); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	r.Log.Info("Ingress dependencies", "ingress", deps)
+	r.Log.V(2).Info("Ingress dependencies", "ingress", deps)
 	r.Dependencies[ingress] = deps
 
 	return ctrl.Result{}, nil

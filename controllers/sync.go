@@ -18,7 +18,6 @@ package controllers
 import (
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"k8s.io/ingress-nginx-next/pkg/ingress"
@@ -32,7 +31,7 @@ type SyncController struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	Dependencies map[types.NamespacedName]*ingress.Dependencies
+	Dependencies map[string]*ingress.Dependencies
 
 	ConfigmapWatcher *watch.Configmaps
 	EndpointsWatcher *watch.Endpoints
@@ -65,7 +64,7 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 					continue
 				}
 
-				r.Log.Info("Info", "service", svc)
+				r.Log.Info("Info", "service", svc.UID)
 
 			case "Endpoints":
 				eps, err := r.EndpointsWatcher.Get(evt.NamespacedName)

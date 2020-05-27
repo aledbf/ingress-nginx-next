@@ -11,10 +11,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/tools/cache"
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -49,32 +47,30 @@ type watcher struct {
 	isReferencedFn func(key string) bool
 }
 
-func (w *watcher) addOrUpdate(key string, svc runtime.Object) {
+func (w *watcher) addOrUpdate(key string, obj runtime.Object) {
 	w.watcherMu.Lock()
 	defer w.watcherMu.Unlock()
 
-	w.watching[key] = svc
+	w.watching[key] = obj
 }
 
-func (w *watcher) Add(ingress string, keys []types.NamespacedName) error {
+func (w *watcher) Add(ingress string, keys []string) {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
 
 	for _, key := range keys {
-		if w.toWatch.Has(key.String()) {
+		if w.toWatch.Has(key) {
 			continue
 		}
 
-		w.toWatch.Insert(key.String())
+		w.toWatch.Insert(key)
 	}
 
 	// reload controller
 	w.reloadQueue.Add("dummy")
-
-	return nil
 }
 
-func (w *watcher) remove(key string) error {
+func (w *watcher) remove(key string) {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
 
@@ -82,22 +78,20 @@ func (w *watcher) remove(key string) error {
 	defer w.watcherMu.Unlock()
 
 	if !w.toWatch.Has(key) {
-		return nil
+		return
 	}
 
 	w.log.Info("removing object from watcher", "key", key)
 	delete(w.watching, key)
 
 	if w.isReferencedFn(key) {
-		return nil
+		return
 	}
 
 	w.toWatch.Delete(key)
 
 	// reload controller
 	w.reloadQueue.Add("dummy")
-
-	return nil
 }
 
 func (w *watcher) Get(key string) (runtime.Object, error) {
@@ -195,13 +189,13 @@ func (w *watcher) newServiceController() (controller.Controller, error) {
 			if apiError != nil {
 				if apierrors.IsNotFound(apiError) {
 					w.events <- Event{
-						NamespacedName: req.NamespacedName,
+						NamespacedName: req.NamespacedName.String(),
 						Type:           RemoveEvent,
 						TypeMeta:       meta,
 					}
 
-					err := w.remove(req.NamespacedName.String())
-					return reconcile.Result{}, err
+					w.remove(req.NamespacedName.String())
+					return reconcile.Result{}, nil
 				}
 
 				return reconcile.Result{}, apiError
@@ -209,7 +203,7 @@ func (w *watcher) newServiceController() (controller.Controller, error) {
 
 			w.addOrUpdate(req.NamespacedName.String(), obj)
 			w.events <- Event{
-				NamespacedName: req.NamespacedName,
+				NamespacedName: req.NamespacedName.String(),
 				Type:           AddUpdateEvent,
 				TypeMeta:       meta,
 			}
@@ -258,9 +252,4 @@ func (w *watcher) shouldWatch(obj runtime.Object) bool {
 	}
 
 	return w.toWatch.Has(key)
-}
-
-func makeNamespacedName(key string) types.NamespacedName {
-	namespace, name, _ := cache.SplitMetaNamespaceKey(key)
-	return types.NamespacedName{Namespace: namespace, Name: name}
 }

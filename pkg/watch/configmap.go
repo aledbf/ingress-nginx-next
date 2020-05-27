@@ -2,7 +2,6 @@ package watch
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/ingress-nginx-next/pkg/reference"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -28,8 +27,8 @@ func NewConfigmapWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager
 	return configmaps, nil
 }
 
-func (cw *Configmaps) Get(key types.NamespacedName) (*corev1.ConfigMap, error) {
-	obj, err := cw.watcher.Get(key.String())
+func (cw *Configmaps) Get(key string) (*corev1.ConfigMap, error) {
+	obj, err := cw.watcher.Get(key)
 	if err != nil {
 		return nil, err
 	}
@@ -38,22 +37,21 @@ func (cw *Configmaps) Get(key types.NamespacedName) (*corev1.ConfigMap, error) {
 	return svc, nil
 }
 
-func (cw *Configmaps) Add(ingress types.NamespacedName, configmaps []types.NamespacedName) error {
+func (cw *Configmaps) Add(ingress string, configmaps []string) {
 	for _, configmap := range configmaps {
-		cw.references.Insert(ingress.String(), configmap.String())
+		cw.references.Insert(ingress, configmap)
 	}
 
-	return cw.watcher.Add(ingress.String(), configmaps)
+	cw.watcher.Add(ingress, configmaps)
 }
 
-func (cw *Configmaps) RemoveReferencedBy(ingress types.NamespacedName) {
-	key := ingress.String()
-	if !cw.references.HasConsumer(key) {
+func (cw *Configmaps) RemoveReferencedBy(ingress string) {
+	if !cw.references.HasConsumer(ingress) {
 		// there is no configmap references
 		return
 	}
 
-	configmaps := cw.references.ReferencedBy(key)
+	configmaps := cw.references.ReferencedBy(ingress)
 	for _, configmap := range configmaps {
 		//cw.watcher.remove(configmap)
 		cw.references.Delete(configmap)
