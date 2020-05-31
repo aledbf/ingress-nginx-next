@@ -81,7 +81,7 @@ func main() {
 	//kubeClient
 	_, err = kubernetes.NewForConfig(ctrl.GetConfigOrDie())
 	if err != nil {
-		setupLog.Error(err, "unable to start manager")
+		setupLog.Error(err, "unable to create an API client")
 		os.Exit(1)
 	}
 
@@ -116,9 +116,10 @@ func main() {
 
 	go func() {
 		(&controllers.SyncController{
-			Client:       mgr.GetClient(),
-			Log:          ctrl.Log.WithName("controllers").WithName("sync"),
-			Scheme:       mgr.GetScheme(),
+			Client: mgr.GetClient(),
+			Log:    ctrl.Log.WithName("controllers").WithName("sync"),
+			Scheme: mgr.GetScheme(),
+
 			Dependencies: ingressDependencies,
 
 			ConfigmapWatcher: configmapWatcher,
@@ -131,9 +132,10 @@ func main() {
 	}()
 
 	if err = (&controllers.IngressReconciler{
-		Client:       mgr.GetClient(),
-		Log:          ctrl.Log.WithName("controllers").WithName("ingress"),
-		Scheme:       mgr.GetScheme(),
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("ingress"),
+		Scheme: mgr.GetScheme(),
+
 		Dependencies: ingressDependencies,
 
 		ConfigmapWatcher: configmapWatcher,

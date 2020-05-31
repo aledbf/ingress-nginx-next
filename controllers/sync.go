@@ -28,6 +28,7 @@ import (
 // SyncController reconciles objects related to NGINX
 type SyncController struct {
 	client.Client
+
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
@@ -58,6 +59,10 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 				// update
 				// reload
 			case "Service":
+				// supports dynamic updates.
+				// collect all upstreams? or just send this one?
+
+				// upstreams -> service
 				svc, err := r.ServiceWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting service information")
@@ -67,6 +72,7 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 				r.Log.Info("Info", "service", svc.UID)
 
 			case "Endpoints":
+				// upstream servers -> endpoints
 				eps, err := r.EndpointsWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting endpoints information")
@@ -74,13 +80,6 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 				}
 
 				r.Log.Info("Info", "endpoints", eps.UID)
-
-				// supports dynamic updates.
-				// collect all upstreams? or just send this one?
-
-				// upstreams -> service
-				// upstream servers -> endpoints
-
 			case "Secrets":
 				sec, err := r.SecretWatcher.Get(evt.NamespacedName)
 				if err != nil {

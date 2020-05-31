@@ -33,6 +33,7 @@ import (
 // IngressReconciler reconciles a Nginx object
 type IngressReconciler struct {
 	client.Client
+
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
