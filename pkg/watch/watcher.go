@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"golang.org/x/time/rate"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,6 +15,7 @@ import (
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -126,12 +126,7 @@ func NewWatcher(name string, runObj runtime.Object, isReferencedFn func(key stri
 
 		log: ctrl.Log.WithName("watcher").WithName(name),
 
-		reloadQueue: workqueue.NewNamedRateLimitingQueue(workqueue.NewMaxOfRateLimiter(
-			workqueue.NewItemExponentialFailureRateLimiter(500*time.Millisecond, 1000*time.Second),
-			// 10 qps, 100 bucket size. This is only for retry speed and its
-			// only the overall factor (not per item).
-			&workqueue.BucketRateLimiter{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
-		), fmt.Sprintf("%v-queue", name)),
+		reloadQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), fmt.Sprintf("%v-queue", name)),
 	}
 
 	return w, nil
@@ -159,8 +154,13 @@ func (w *watcher) processNextItem() bool {
 	// create a new stop channel
 	w.stopCh = make(chan struct{})
 
+	ca, err := cache.New(w.mgr.GetConfig(), cache.Options{Scheme: w.mgr.GetScheme(), Mapper: w.mgr.GetRESTMapper()})
+	if err != nil {
+		return false
+	}
+
 	// start a new service-controller
-	c, err := w.newServiceController()
+	c, err := w.newServiceController(ca)
 	if err != nil {
 		return false
 	}
@@ -171,12 +171,18 @@ func (w *watcher) processNextItem() bool {
 		}
 	}()
 
-	time.Sleep(1 * time.Second)
+	if err = ca.Start(w.stopCh); err != nil {
+		return false
+	}
+
+	if ok := ca.WaitForCacheSync(w.stopCh); !ok {
+		return false
+	}
 
 	return true
 }
 
-func (w *watcher) newServiceController() (controller.Controller, error) {
+func (w *watcher) newServiceController(ca cache.Cache) (controller.Controller, error) {
 	c, err := controller.NewUnmanaged(fmt.Sprintf("%v-controller", w.name), w.mgr, controller.Options{
 		Reconciler: reconcile.Func(func(req reconcile.Request) (reconcile.Result, error) {
 			obj := w.runtimeObject.DeepCopyObject()
@@ -188,12 +194,7 @@ func (w *watcher) newServiceController() (controller.Controller, error) {
 
 			if apiError != nil {
 				if apierrors.IsNotFound(apiError) {
-					w.events <- Event{
-						NamespacedName: req.NamespacedName.String(),
-						Type:           RemoveEvent,
-						TypeMeta:       meta,
-					}
-
+					w.events <- Event{NamespacedName: req.NamespacedName.String(), Type: RemoveEvent, TypeMeta: meta}
 					w.remove(req.NamespacedName.String())
 					return reconcile.Result{}, nil
 				}
@@ -202,11 +203,7 @@ func (w *watcher) newServiceController() (controller.Controller, error) {
 			}
 
 			w.addOrUpdate(req.NamespacedName.String(), obj)
-			w.events <- Event{
-				NamespacedName: req.NamespacedName.String(),
-				Type:           AddUpdateEvent,
-				TypeMeta:       meta,
-			}
+			w.events <- Event{NamespacedName: req.NamespacedName.String(), Type: AddUpdateEvent, TypeMeta: meta}
 
 			return reconcile.Result{}, nil
 		}),
@@ -215,13 +212,7 @@ func (w *watcher) newServiceController() (controller.Controller, error) {
 		return nil, err
 	}
 
-	err = c.Watch(&source.Kind{
-		Type: w.runtimeObject,
-	},
-		&handler.EnqueueRequestForObject{},
-		w.predicate(),
-	)
-	if err != nil {
+	if err := c.Watch(source.NewKindWithCache(w.runtimeObject, ca), &handler.EnqueueRequestForObject{}, w.predicate()); err != nil {
 		return nil, err
 	}
 
