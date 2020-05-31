@@ -49,9 +49,11 @@ func init() {
 func main() {
 	klog.InitFlags(nil)
 
-	var metricsAddr string
-	var enableLeaderElection bool
-	var development bool
+	var (
+		metricsAddr          string
+		enableLeaderElection bool
+		development          bool
+	)
 
 	flag.BoolVar(&development, "development-log", false, "Configure logs in development format.")
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
