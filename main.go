@@ -23,7 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/klog"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -47,7 +46,7 @@ func init() {
 }
 
 func main() {
-	klog.InitFlags(nil)
+	//klog.InitFlags(nil)
 
 	var (
 		metricsAddr          string
@@ -63,6 +62,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(func(o *zap.Options) {
 		o.Development = development
+		//o.Level = logzap.NewAtomicLevelAt(logzap.DebugLevel)
 	}))
 
 	profiler.Register(ctrl.Log)
