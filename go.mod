@@ -4,13 +4,10 @@ go 1.14
 
 require (
 	github.com/go-logr/logr v0.1.0
-	github.com/json-iterator/go v1.1.10-0.20200508070825-55287ed53a0a // indirect
-	github.com/onsi/ginkgo v1.12.2
+	github.com/onsi/ginkgo v1.14.0
 	github.com/onsi/gomega v1.10.1
-	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4
-	k8s.io/api v0.18.3
-	k8s.io/apimachinery v0.18.3
-	k8s.io/client-go v0.18.3
-	k8s.io/klog v1.0.0
-	sigs.k8s.io/controller-runtime v0.6.1-0.20200609153321-eb68324729c0
+	k8s.io/api v0.18.6
+	k8s.io/apimachinery v0.18.6
+	k8s.io/client-go v0.18.6
+	sigs.k8s.io/controller-runtime v0.6.1
 )
