@@ -130,8 +130,6 @@ func NewWatcher(name string, runObj client.Object, isReferencedFn func(key strin
 		reloadQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), fmt.Sprintf("%v-queue", name)),
 	}
 
-	w.ctx, w.cancel = context.WithCancel(context.Background())
-
 	return w, nil
 }
 
@@ -155,7 +153,7 @@ func (w *watcher) processNextItem(ctx context.Context) bool {
 	// stop service-controler
 	w.cancel()
 	// create a new stop channel
-	w.ctx, w.cancel = context.WithCancel(context.Background())
+	w.ctx, w.cancel = context.WithCancel(ctx)
 
 	ca, err := cache.New(w.mgr.GetConfig(), cache.Options{Scheme: w.mgr.GetScheme(), Mapper: w.mgr.GetRESTMapper()})
 	if err != nil {

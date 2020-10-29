@@ -14,7 +14,7 @@ type Endpoints struct {
 	references reference.ObjectRefMap
 }
 
-func NewEndpointsWatcher(eventCh chan Event, stopCh context.Context, mgr manager.Manager) (*Endpoints, error) {
+func NewEndpointsWatcher(eventCh chan Event, ctx context.Context, mgr manager.Manager) (*Endpoints, error) {
 	endpoints := &Endpoints{
 		references: reference.NewObjectRefMap(),
 	}
@@ -23,7 +23,7 @@ func NewEndpointsWatcher(eventCh chan Event, stopCh context.Context, mgr manager
 		return nil, err
 	}
 
-	go w.Start(stopCh)
+	go w.Start(ctx)
 
 	endpoints.watcher = w
 	return endpoints, nil

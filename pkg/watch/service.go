@@ -14,7 +14,7 @@ type Services struct {
 	references reference.ObjectRefMap
 }
 
-func NewServiceWatcher(eventCh chan Event, stopCh context.Context, mgr manager.Manager) (*Services, error) {
+func NewServiceWatcher(eventCh chan Event, ctx context.Context, mgr manager.Manager) (*Services, error) {
 	services := &Services{
 		references: reference.NewObjectRefMap(),
 	}
@@ -23,7 +23,7 @@ func NewServiceWatcher(eventCh chan Event, stopCh context.Context, mgr manager.M
 		return nil, err
 	}
 
-	go w.Start(stopCh)
+	go w.Start(ctx)
 
 	services.watcher = w
 	return services, nil

@@ -14,7 +14,7 @@ type Secrets struct {
 	references reference.ObjectRefMap
 }
 
-func NewSecretWatcher(eventCh chan Event, stopCh context.Context, mgr manager.Manager) (*Secrets, error) {
+func NewSecretWatcher(eventCh chan Event, ctx context.Context, mgr manager.Manager) (*Secrets, error) {
 	secrets := &Secrets{
 		references: reference.NewObjectRefMap(),
 	}
@@ -23,7 +23,7 @@ func NewSecretWatcher(eventCh chan Event, stopCh context.Context, mgr manager.Ma
 		return nil, err
 	}
 
-	go w.Start(stopCh)
+	go w.Start(ctx)
 
 	secrets.watcher = w
 	return secrets, nil

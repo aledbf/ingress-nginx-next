@@ -18,12 +18,10 @@ package controllers
 import (
 	"context"
 
-	"github.com/go-logr/logr"
 	networking "k8s.io/api/networking/v1beta1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
-	ctrl "sigs.k8s.io/controller-runtime"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	ingressutil "k8s.io/ingress-nginx-next/pkg/ingress"
@@ -35,9 +33,6 @@ import (
 type IngressReconciler struct {
 	client.Client
 
-	Log    logr.Logger
-	Scheme *runtime.Scheme
-
 	Dependencies map[string]*ingressutil.Dependencies
 
 	ConfigmapWatcher *watch.Configmaps
@@ -46,25 +41,33 @@ type IngressReconciler struct {
 	ServiceWatcher   *watch.Services
 }
 
+// Implement reconcile.Reconciler so the controller can reconcile objects
+var _ reconcile.Reconciler = &IngressReconciler{}
+
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress,verbs=get;list;watch;
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress/status,verbs=get;update;patch
 
 func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	log := log.FromContext(ctx)
+
 	ingress := req.NamespacedName.String()
 
+	// fetch  from the cache
 	ing := &networking.Ingress{}
+	err := r.Get(ctx, req.NamespacedName, ing)
+	if errors.IsNotFound(err) {
+		log.Info("Ingress removed", "ingress", ingress)
 
-	if err := r.Get(ctx, req.NamespacedName, ing); err != nil {
-		if apierrors.IsNotFound(err) {
-			r.ConfigmapWatcher.RemoveReferencedBy(ingress)
-			r.EndpointsWatcher.RemoveReferencedBy(ingress)
-			r.SecretWatcher.RemoveReferencedBy(ingress)
-			r.ServiceWatcher.RemoveReferencedBy(ingress)
+		r.ConfigmapWatcher.RemoveReferencedBy(ingress)
+		r.EndpointsWatcher.RemoveReferencedBy(ingress)
+		r.SecretWatcher.RemoveReferencedBy(ingress)
+		r.ServiceWatcher.RemoveReferencedBy(ingress)
 
-			delete(r.Dependencies, ingress)
-			return reconcile.Result{}, nil
-		}
+		delete(r.Dependencies, ingress)
+		return reconcile.Result{}, nil
+	}
 
+	if err != nil {
 		return reconcile.Result{}, err
 	}
 
@@ -75,14 +78,8 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request
 	r.SecretWatcher.Add(ingress, deps.Secrets)
 	r.ServiceWatcher.Add(ingress, deps.Services)
 
-	r.Log.V(2).Info("Ingress dependencies", "ingress", deps)
+	log.Info("Ingress dependencies", "ingress", deps)
 	r.Dependencies[ingress] = deps
 
 	return reconcile.Result{}, nil
-}
-
-func (r *IngressReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&networking.Ingress{}).
-		Complete(r)
 }
