@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	ingressutil "k8s.io/ingress-nginx-next/pkg/ingress"
 	"k8s.io/ingress-nginx-next/pkg/watch"
@@ -48,12 +49,11 @@ type IngressReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress,verbs=get;list;watch;
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress/status,verbs=get;update;patch
 
-func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	ingress := req.NamespacedName.String()
 
 	ing := &networking.Ingress{}
 
-	ctx := context.Background()
 	if err := r.Get(ctx, req.NamespacedName, ing); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.ConfigmapWatcher.RemoveReferencedBy(ingress)
@@ -62,10 +62,10 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			r.ServiceWatcher.RemoveReferencedBy(ingress)
 
 			delete(r.Dependencies, ingress)
-			return ctrl.Result{}, nil
+			return reconcile.Result{}, nil
 		}
 
-		return ctrl.Result{}, err
+		return reconcile.Result{}, err
 	}
 
 	deps := ingressutil.Parse(ing)
@@ -78,7 +78,7 @@ func (r *IngressReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	r.Log.V(2).Info("Ingress dependencies", "ingress", deps)
 	r.Dependencies[ingress] = deps
 
-	return ctrl.Result{}, nil
+	return reconcile.Result{}, nil
 }
 
 func (r *IngressReconciler) SetupWithManager(mgr ctrl.Manager) error {

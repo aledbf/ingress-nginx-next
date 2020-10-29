@@ -3,11 +3,11 @@ module k8s.io/ingress-nginx-next
 go 1.15
 
 require (
-	github.com/go-logr/logr v0.1.0
-	github.com/onsi/ginkgo v1.14.0
-	github.com/onsi/gomega v1.10.1
-	k8s.io/api v0.18.6
-	k8s.io/apimachinery v0.18.6
-	k8s.io/client-go v0.18.6
-	sigs.k8s.io/controller-runtime v0.6.1
+	github.com/go-logr/logr v0.2.1
+	github.com/onsi/ginkgo v1.14.2
+	github.com/onsi/gomega v1.10.3
+	k8s.io/api v0.19.3
+	k8s.io/apimachinery v0.19.3
+	k8s.io/client-go v0.19.3
+	sigs.k8s.io/controller-runtime v0.7.0-alpha.4.0.20201022152736-74fd294a89c6
 )

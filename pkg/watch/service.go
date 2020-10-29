@@ -1,6 +1,8 @@
 package watch
 
 import (
+	"context"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/ingress-nginx-next/pkg/reference"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -12,7 +14,7 @@ type Services struct {
 	references reference.ObjectRefMap
 }
 
-func NewServiceWatcher(eventCh chan Event, stopCh <-chan struct{}, mgr manager.Manager) (*Services, error) {
+func NewServiceWatcher(eventCh chan Event, stopCh context.Context, mgr manager.Manager) (*Services, error) {
 	services := &Services{
 		references: reference.NewObjectRefMap(),
 	}

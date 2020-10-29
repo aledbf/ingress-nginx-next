@@ -16,6 +16,8 @@ limitations under the License.
 package controllers
 
 import (
+	"context"
+
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,7 +44,7 @@ type SyncController struct {
 	Events chan watch.Event
 }
 
-func (r *SyncController) Run(stopCh <-chan struct{}) {
+func (r *SyncController) Run(ctx context.Context) {
 	for {
 		select {
 		case evt := <-r.Events:
@@ -91,7 +93,7 @@ func (r *SyncController) Run(stopCh <-chan struct{}) {
 				// supports dynamic updates.
 				// collect all secrets? or just send this one?
 			}
-		case <-stopCh:
+		case <-ctx.Done():
 			return
 		}
 	}

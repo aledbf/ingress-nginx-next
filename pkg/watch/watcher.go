@@ -9,13 +9,13 @@ import (
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -29,9 +29,11 @@ type watcher struct {
 	name string
 
 	events chan Event
-	stopCh chan struct{}
 
-	watching  map[string]runtime.Object
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	watching  map[string]client.Object
 	watcherMu *sync.RWMutex
 
 	toWatch   sets.String
@@ -42,12 +44,12 @@ type watcher struct {
 
 	reloadQueue workqueue.RateLimitingInterface
 
-	runtimeObject runtime.Object
+	runtimeObject client.Object
 
 	isReferencedFn func(key string) bool
 }
 
-func (w *watcher) addOrUpdate(key string, obj runtime.Object) {
+func (w *watcher) addOrUpdate(key string, obj client.Object) {
 	w.watcherMu.Lock()
 	defer w.watcherMu.Unlock()
 
@@ -94,7 +96,7 @@ func (w *watcher) remove(key string) {
 	w.reloadQueue.Add("dummy")
 }
 
-func (w *watcher) Get(key string) (runtime.Object, error) {
+func (w *watcher) Get(key string) (client.Object, error) {
 	w.watcherMu.RLock()
 	defer w.watcherMu.RUnlock()
 
@@ -105,7 +107,7 @@ func (w *watcher) Get(key string) (runtime.Object, error) {
 	return nil, fmt.Errorf("object %v does not exists", key)
 }
 
-func NewWatcher(name string, runObj runtime.Object, isReferencedFn func(key string) bool, eventCh chan Event, mgr manager.Manager) (*watcher, error) {
+func NewWatcher(name string, runObj client.Object, isReferencedFn func(key string) bool, eventCh chan Event, mgr manager.Manager) (*watcher, error) {
 	w := &watcher{
 		name: name,
 
@@ -113,10 +115,9 @@ func NewWatcher(name string, runObj runtime.Object, isReferencedFn func(key stri
 
 		runtimeObject: runObj,
 
-		stopCh: make(chan struct{}),
 		events: eventCh,
 
-		watching:  make(map[string]runtime.Object),
+		watching:  make(map[string]client.Object),
 		watcherMu: &sync.RWMutex{},
 
 		mgr: mgr,
@@ -129,19 +130,21 @@ func NewWatcher(name string, runObj runtime.Object, isReferencedFn func(key stri
 		reloadQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), fmt.Sprintf("%v-queue", name)),
 	}
 
+	w.ctx, w.cancel = context.WithCancel(context.Background())
+
 	return w, nil
 }
 
-func (w *watcher) Start(stopCh <-chan struct{}) {
-	wait.Until(w.runWorker, time.Second, stopCh)
+func (w *watcher) Start(ctx context.Context) {
+	w.ctx, w.cancel = context.WithCancel(ctx)
+
+	wait.UntilWithContext(ctx, func(ctx context.Context) {
+		for w.processNextItem(ctx) {
+		}
+	}, time.Second)
 }
 
-func (w *watcher) runWorker() {
-	for w.processNextItem() {
-	}
-}
-
-func (w *watcher) processNextItem() bool {
+func (w *watcher) processNextItem(ctx context.Context) bool {
 	key, quit := w.reloadQueue.Get()
 	if quit {
 		return false
@@ -150,9 +153,9 @@ func (w *watcher) processNextItem() bool {
 	defer w.reloadQueue.Done(key)
 
 	// stop service-controler
-	close(w.stopCh)
+	w.cancel()
 	// create a new stop channel
-	w.stopCh = make(chan struct{})
+	w.ctx, w.cancel = context.WithCancel(context.Background())
 
 	ca, err := cache.New(w.mgr.GetConfig(), cache.Options{Scheme: w.mgr.GetScheme(), Mapper: w.mgr.GetRESTMapper()})
 	if err != nil {
@@ -166,16 +169,16 @@ func (w *watcher) processNextItem() bool {
 	}
 
 	go func() {
-		if err := c.Start(w.stopCh); err != nil {
+		if err := c.Start(w.ctx); err != nil {
 			w.log.Error(err, fmt.Sprintf("starting %v controller", w.name))
 		}
 	}()
 
-	if err = ca.Start(w.stopCh); err != nil {
+	if err = ca.Start(w.ctx); err != nil {
 		return false
 	}
 
-	if ok := ca.WaitForCacheSync(w.stopCh); !ok {
+	if ok := ca.WaitForCacheSync(w.ctx); !ok {
 		return false
 	}
 
@@ -184,8 +187,8 @@ func (w *watcher) processNextItem() bool {
 
 func (w *watcher) newServiceController(ca cache.Cache) (controller.Controller, error) {
 	c, err := controller.NewUnmanaged(fmt.Sprintf("%v-controller", w.name), w.mgr, controller.Options{
-		Reconciler: reconcile.Func(func(req reconcile.Request) (reconcile.Result, error) {
-			obj := w.runtimeObject.DeepCopyObject()
+		Reconciler: reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+			obj := w.runtimeObject.DeepCopyObject().(client.Object)
 			apiError := w.mgr.GetClient().Get(context.Background(), req.NamespacedName, obj)
 			meta := metav1.TypeMeta{
 				Kind:       obj.GetObjectKind().GroupVersionKind().Kind,
@@ -233,7 +236,7 @@ func (w *watcher) predicate() predicate.Predicate {
 	}
 }
 
-func (w *watcher) shouldWatch(obj runtime.Object) bool {
+func (w *watcher) shouldWatch(obj client.Object) bool {
 	w.toWatchMu.RLock()
 	defer w.toWatchMu.RUnlock()
 
