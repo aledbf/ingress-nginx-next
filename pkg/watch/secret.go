@@ -4,6 +4,8 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/ingress-nginx-next/pkg/reference"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -18,7 +20,11 @@ func NewSecretWatcher(eventCh chan Event, ctx context.Context, mgr manager.Manag
 	secrets := &Secrets{
 		references: reference.NewObjectRefMap(),
 	}
-	w, err := NewWatcher("secrets", &corev1.Secret{}, secrets.isReferenced, eventCh, mgr)
+
+	partialMetadata := meta.AsPartialObjectMetadata(&corev1.Secret{})
+	partialMetadata.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+
+	w, err := NewWatcher("secrets", partialMetadata, secrets.isReferenced, eventCh, mgr)
 	if err != nil {
 		return nil, err
 	}
@@ -35,8 +41,12 @@ func (sw *Secrets) Get(key string) (*corev1.Secret, error) {
 		return nil, err
 	}
 
-	svc := obj.(*corev1.Secret)
-	return svc, nil
+	opm := obj.(*metav1.PartialObjectMetadata)
+
+	secret := &corev1.Secret{}
+	opm.ObjectMeta.DeepCopyInto(&secret.ObjectMeta)
+
+	return secret, nil
 }
 
 func (sw *Secrets) Add(ingress string, secrets []string) {
