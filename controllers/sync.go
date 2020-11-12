@@ -81,8 +81,8 @@ func (r *SyncController) Run(ctx context.Context) {
 					continue
 				}
 
-				r.Log.Info("Info", "endpoints", eps.UID)
-			case "Secrets":
+				r.Log.Info("Info", "endpoints", eps)
+			case "Secret":
 				sec, err := r.SecretWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting endpoints information")

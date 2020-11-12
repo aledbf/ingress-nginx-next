@@ -39,21 +39,21 @@ func (sw *Services) Get(key string) (*corev1.Service, error) {
 	return svc, nil
 }
 
-func (sw *Services) Add(ingress string, services []string) {
+func (sw *Services) Add(key string, services []string) {
 	for _, service := range services {
-		sw.references.Insert(ingress, service)
+		sw.references.Insert(key, service)
 	}
 
-	sw.watcher.Add(ingress, services)
+	sw.watcher.Add(key, services)
 }
 
-func (sw *Services) RemoveReferencedBy(ingress string) {
-	if !sw.references.HasConsumer(ingress) {
+func (sw *Services) RemoveReferencedBy(key string) {
+	if !sw.references.HasConsumer(key) {
 		// there is no service references
 		return
 	}
 
-	services := sw.references.ReferencedBy(ingress)
+	services := sw.references.ReferencedBy(key)
 	for _, service := range services {
 		sw.watcher.remove(service)
 		sw.references.Delete(service)

@@ -11,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
-	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -69,7 +68,7 @@ func (w *watcher) Add(ingress string, keys []string) {
 	}
 
 	// reload controller
-	w.reloadQueue.Add("dummy")
+	w.reloadQueue.Add("add")
 }
 
 func (w *watcher) remove(key string) {
@@ -93,7 +92,7 @@ func (w *watcher) remove(key string) {
 	w.toWatch.Delete(key)
 
 	// reload controller
-	w.reloadQueue.Add("dummy")
+	w.reloadQueue.Add("remove")
 }
 
 func (w *watcher) Get(key string) (client.Object, error) {
@@ -150,18 +149,21 @@ func (w *watcher) processNextItem(ctx context.Context) bool {
 
 	defer w.reloadQueue.Done(key)
 
-	// stop service-controler
+	// stop watcher
 	w.cancel()
 	// create a new stop channel
 	w.ctx, w.cancel = context.WithCancel(ctx)
 
-	ca, err := cache.New(w.mgr.GetConfig(), cache.Options{Scheme: w.mgr.GetScheme(), Mapper: w.mgr.GetRESTMapper()})
+	ca, err := cache.New(w.mgr.GetConfig(), cache.Options{
+		Scheme: w.mgr.GetScheme(),
+		Mapper: w.mgr.GetRESTMapper(),
+	})
 	if err != nil {
 		return false
 	}
 
-	// start a new service-controller
-	c, err := w.newServiceController(ca)
+	// start a new watcher
+	c, err := w.newWatcherController(ca)
 	if err != nil {
 		return false
 	}
@@ -183,7 +185,7 @@ func (w *watcher) processNextItem(ctx context.Context) bool {
 	return true
 }
 
-func (w *watcher) newServiceController(ca cache.Cache) (controller.Controller, error) {
+func (w *watcher) newWatcherController(ca cache.Cache) (controller.Controller, error) {
 	c, err := controller.NewUnmanaged(fmt.Sprintf("%v-controller", w.name), w.mgr, controller.Options{
 		Reconciler: reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 			obj := w.runtimeObject.DeepCopyObject().(client.Object)
@@ -238,10 +240,13 @@ func (w *watcher) shouldWatch(obj client.Object) bool {
 	w.toWatchMu.RLock()
 	defer w.toWatchMu.RUnlock()
 
-	key, err := toolscache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-	if err != nil {
-		return false
-	}
-
+	key := objectKeyToStoreKey(obj)
 	return w.toWatch.Has(key)
+}
+
+func objectKeyToStoreKey(k client.Object) string {
+	if k.GetNamespace() == "" {
+		return "default/" + k.GetName()
+	}
+	return k.GetNamespace() + "/" + k.GetName()
 }

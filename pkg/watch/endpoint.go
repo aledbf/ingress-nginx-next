@@ -39,21 +39,21 @@ func (sw *Endpoints) Get(key string) (*corev1.Endpoints, error) {
 	return svc, nil
 }
 
-func (sw *Endpoints) Add(ingress string, endpoints []string) {
+func (sw *Endpoints) Add(key string, endpoints []string) {
 	for _, endpoint := range endpoints {
-		sw.references.Insert(ingress, endpoint)
+		sw.references.Insert(key, endpoint)
 	}
 
-	sw.watcher.Add(ingress, endpoints)
+	sw.watcher.Add(key, endpoints)
 }
 
-func (sw *Endpoints) RemoveReferencedBy(ingress string) {
-	if !sw.references.HasConsumer(ingress) {
+func (sw *Endpoints) RemoveReferencedBy(key string) {
+	if !sw.references.HasConsumer(key) {
 		// there is no endpoints references
 		return
 	}
 
-	endpoints := sw.references.ReferencedBy(ingress)
+	endpoints := sw.references.ReferencedBy(key)
 	for _, endpoint := range endpoints {
 		sw.watcher.remove(endpoint)
 		sw.references.Delete(endpoint)
