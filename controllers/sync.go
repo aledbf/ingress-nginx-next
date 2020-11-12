@@ -65,31 +65,31 @@ func (r *SyncController) Run(ctx context.Context) {
 				// collect all upstreams? or just send this one?
 
 				// upstreams -> service
-				svc, err := r.ServiceWatcher.Get(evt.NamespacedName)
+				_, err := r.ServiceWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting service information")
 					continue
 				}
 
-				r.Log.Info("Info", "service", svc.UID)
+				r.Log.Info("Info", "service", evt.NamespacedName)
 
 			case "Endpoints":
 				// upstream servers -> endpoints
-				eps, err := r.EndpointsWatcher.Get(evt.NamespacedName)
+				_, err := r.EndpointsWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting endpoints information")
 					continue
 				}
 
-				r.Log.Info("Info", "endpoints", eps)
+				r.Log.Info("Info", "endpoints", evt.NamespacedName)
 			case "Secret":
-				sec, err := r.SecretWatcher.Get(evt.NamespacedName)
+				_, err := r.SecretWatcher.Get(evt.NamespacedName)
 				if err != nil {
 					r.Log.Error(err, "extracting endpoints information")
 					continue
 				}
 
-				r.Log.Info("Info", "secrets", sec.UID)
+				r.Log.Info("Info", "secret", evt.NamespacedName)
 				// supports dynamic updates.
 				// collect all secrets? or just send this one?
 			}

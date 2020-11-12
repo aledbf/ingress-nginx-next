@@ -87,25 +87,25 @@ func main() {
 	events := make(chan watch.Event)
 	ctx := ctrl.SetupSignalHandler()
 
-	configmapWatcher, err := watch.NewConfigmapWatcher(events, ctx, mgr)
+	configmapWatcher, err := watch.NewConfigmapWatcher(ctx, events, mgr)
 	if err != nil {
 		setupLog.Error(err, "unable to start configmap watcher")
 		os.Exit(1)
 	}
 
-	endpointsWatcher, err := watch.NewEndpointsWatcher(events, ctx, mgr)
+	endpointsWatcher, err := watch.NewEndpointsWatcher(ctx, events, mgr)
 	if err != nil {
 		setupLog.Error(err, "unable to start endpoints watcher")
 		os.Exit(1)
 	}
 
-	secretWatcher, err := watch.NewSecretWatcher(events, ctx, mgr)
+	secretWatcher, err := watch.NewSecretWatcher(ctx, events, mgr)
 	if err != nil {
 		setupLog.Error(err, "unable to start secret watcher")
 		os.Exit(1)
 	}
 
-	serviceWatcher, err := watch.NewServiceWatcher(events, ctx, mgr)
+	serviceWatcher, err := watch.NewServiceWatcher(ctx, events, mgr)
 	if err != nil {
 		setupLog.Error(err, "unable to start service watcher")
 		os.Exit(1)

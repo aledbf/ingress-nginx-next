@@ -14,7 +14,7 @@ type Configmaps struct {
 	references reference.ObjectRefMap
 }
 
-func NewConfigmapWatcher(eventCh chan Event, ctx context.Context, mgr manager.Manager) (*Configmaps, error) {
+func NewConfigmapWatcher(ctx context.Context, eventCh chan Event, mgr manager.Manager) (*Configmaps, error) {
 	configmaps := &Configmaps{
 		references: reference.NewObjectRefMap(),
 	}

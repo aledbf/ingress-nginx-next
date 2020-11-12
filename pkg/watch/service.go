@@ -14,7 +14,7 @@ type Services struct {
 	references reference.ObjectRefMap
 }
 
-func NewServiceWatcher(eventCh chan Event, ctx context.Context, mgr manager.Manager) (*Services, error) {
+func NewServiceWatcher(ctx context.Context, eventCh chan Event, mgr manager.Manager) (*Services, error) {
 	services := &Services{
 		references: reference.NewObjectRefMap(),
 	}

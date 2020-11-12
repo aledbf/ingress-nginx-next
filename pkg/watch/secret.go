@@ -16,7 +16,7 @@ type Secrets struct {
 	references reference.ObjectRefMap
 }
 
-func NewSecretWatcher(eventCh chan Event, ctx context.Context, mgr manager.Manager) (*Secrets, error) {
+func NewSecretWatcher(ctx context.Context, eventCh chan Event, mgr manager.Manager) (*Secrets, error) {
 	secrets := &Secrets{
 		references: reference.NewObjectRefMap(),
 	}
@@ -41,29 +41,29 @@ func (sw *Secrets) Get(key string) (*corev1.Secret, error) {
 		return nil, err
 	}
 
-	opm := obj.(*metav1.PartialObjectMetadata)
-
 	secret := &corev1.Secret{}
+
+	opm := obj.(*metav1.PartialObjectMetadata)
 	opm.ObjectMeta.DeepCopyInto(&secret.ObjectMeta)
 
 	return secret, nil
 }
 
-func (sw *Secrets) Add(ingress string, secrets []string) {
+func (sw *Secrets) Add(key string, secrets []string) {
 	for _, secret := range secrets {
-		sw.references.Insert(ingress, secret)
+		sw.references.Insert(key, secret)
 	}
 
-	sw.watcher.Add(ingress, secrets)
+	sw.watcher.Add(key, secrets)
 }
 
-func (sw *Secrets) RemoveReferencedBy(ingress string) {
-	if !sw.references.HasConsumer(ingress) {
+func (sw *Secrets) RemoveReferencedBy(key string) {
+	if !sw.references.HasConsumer(key) {
 		// there is no secret references
 		return
 	}
 
-	secrets := sw.references.ReferencedBy(ingress)
+	secrets := sw.references.ReferencedBy(key)
 	for _, secret := range secrets {
 		sw.watcher.remove(secret)
 		sw.references.Delete(secret)
