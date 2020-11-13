@@ -9,7 +9,7 @@ import (
 )
 
 type Endpoints struct {
-	watcher *watcher
+	watcher Watcher
 
 	references reference.ObjectRefMap
 }
@@ -49,13 +49,12 @@ func (sw *Endpoints) Add(key string, endpoints []string) {
 
 func (sw *Endpoints) RemoveReferencedBy(key string) {
 	if !sw.references.HasConsumer(key) {
-		// there is no endpoints references
 		return
 	}
 
 	endpoints := sw.references.ReferencedBy(key)
 	for _, endpoint := range endpoints {
-		sw.watcher.remove(endpoint)
+		sw.watcher.Remove(endpoint)
 		sw.references.Delete(endpoint)
 	}
 }

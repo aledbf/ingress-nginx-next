@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -24,13 +25,21 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
+const (
+	errCreateCache      = "cannot create new cache"
+	errCreateController = "cannot create new controller"
+	errCrashCache       = "cache error"
+	errCrashController  = "controller error"
+	errWatch            = "cannot setup watch"
+)
+
 type watcher struct {
 	name string
 
 	events chan Event
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	watcherCtx    context.Context
+	watcherCancel context.CancelFunc
 
 	watching  map[string]client.Object
 	watcherMu *sync.RWMutex
@@ -46,6 +55,13 @@ type watcher struct {
 	runtimeObject client.Object
 
 	isReferencedFn func(key string) bool
+}
+
+type Watcher interface {
+	Add(ingress string, keys []string)
+	Get(key string) (client.Object, error)
+	Remove(key string)
+	Start(ctx context.Context)
 }
 
 func (w *watcher) addOrUpdate(key string, obj client.Object) {
@@ -71,7 +87,7 @@ func (w *watcher) Add(ingress string, keys []string) {
 	w.reloadQueue.Add("add")
 }
 
-func (w *watcher) remove(key string) {
+func (w *watcher) Remove(key string) {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
 
@@ -82,9 +98,7 @@ func (w *watcher) remove(key string) {
 		return
 	}
 
-	w.log.Info("removing object from watcher", "key", key)
 	delete(w.watching, key)
-
 	if w.isReferencedFn(key) {
 		return
 	}
@@ -106,7 +120,7 @@ func (w *watcher) Get(key string) (client.Object, error) {
 	return nil, fmt.Errorf("object %v does not exists", key)
 }
 
-func NewWatcher(name string, runObj client.Object, isReferencedFn func(key string) bool, eventCh chan Event, mgr manager.Manager) (*watcher, error) {
+func NewWatcher(name string, runObj client.Object, isReferencedFn func(key string) bool, eventCh chan Event, mgr manager.Manager) (Watcher, error) {
 	w := &watcher{
 		name: name,
 
@@ -133,8 +147,7 @@ func NewWatcher(name string, runObj client.Object, isReferencedFn func(key strin
 }
 
 func (w *watcher) Start(ctx context.Context) {
-	w.ctx, w.cancel = context.WithCancel(ctx)
-
+	w.watcherCtx, w.watcherCancel = context.WithCancel(ctx)
 	wait.UntilWithContext(ctx, func(ctx context.Context) {
 		for w.processNextItem(ctx) {
 		}
@@ -147,58 +160,65 @@ func (w *watcher) processNextItem(ctx context.Context) bool {
 		return false
 	}
 
-	defer w.reloadQueue.Done(key)
+	// cancel running context
+	w.watcherCancel()
 
-	// stop watcher
-	w.cancel()
-	// create a new stop channel
-	w.ctx, w.cancel = context.WithCancel(ctx)
+	// create a new context
+	w.watcherCtx, w.watcherCancel = context.WithCancel(ctx)
 
 	ca, err := cache.New(w.mgr.GetConfig(), cache.Options{
 		Scheme: w.mgr.GetScheme(),
 		Mapper: w.mgr.GetRESTMapper(),
 	})
+
 	if err != nil {
+		w.log.Error(err, errCreateCache)
 		return false
 	}
 
 	// start a new watcher
-	c, err := w.newWatcherController(ca)
+	c, err := w.newController(ca)
 	if err != nil {
+		w.log.Error(err, errCreateController)
 		return false
 	}
 
 	go func() {
-		if err := c.Start(w.ctx); err != nil {
-			w.log.Error(err, fmt.Sprintf("starting %v controller", w.name))
+		if err := c.Start(w.watcherCtx); err != nil {
+			w.log.Error(err, errCrashController)
 		}
 	}()
 
-	if err = ca.Start(w.ctx); err != nil {
+	go func() {
+		if err = ca.Start(w.watcherCtx); err != nil {
+			w.log.Error(err, errCreateCache)
+		}
+	}()
+
+	if ok := ca.WaitForCacheSync(w.watcherCtx); !ok {
+		w.log.Error(err, errCrashCache)
 		return false
 	}
 
-	if ok := ca.WaitForCacheSync(w.ctx); !ok {
-		return false
-	}
+	w.reloadQueue.Done(key)
 
 	return true
 }
 
-func (w *watcher) newWatcherController(ca cache.Cache) (controller.Controller, error) {
+func (w *watcher) newController(ca cache.Cache) (controller.Controller, error) {
 	c, err := controller.NewUnmanaged(fmt.Sprintf("%v-controller", w.name), w.mgr, controller.Options{
 		Reconciler: reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 			obj := w.runtimeObject.DeepCopyObject().(client.Object)
-			apiError := w.mgr.GetClient().Get(context.Background(), req.NamespacedName, obj)
-			meta := metav1.TypeMeta{
+			watchMeta := metav1.TypeMeta{
 				Kind:       obj.GetObjectKind().GroupVersionKind().Kind,
 				APIVersion: obj.GetObjectKind().GroupVersionKind().Version,
 			}
 
+			apiError := w.mgr.GetClient().Get(context.Background(), req.NamespacedName, obj)
 			if apiError != nil {
 				if apierrors.IsNotFound(apiError) {
-					w.events <- Event{NamespacedName: req.NamespacedName.String(), Type: RemoveEvent, TypeMeta: meta}
-					w.remove(req.NamespacedName.String())
+					w.events <- Event{NamespacedName: req.NamespacedName.String(), Type: RemoveEvent, TypeMeta: watchMeta}
+					w.Remove(req.NamespacedName.String())
 					return reconcile.Result{}, nil
 				}
 
@@ -206,7 +226,8 @@ func (w *watcher) newWatcherController(ca cache.Cache) (controller.Controller, e
 			}
 
 			w.addOrUpdate(req.NamespacedName.String(), obj)
-			w.events <- Event{NamespacedName: req.NamespacedName.String(), Type: AddUpdateEvent, TypeMeta: meta}
+
+			w.events <- Event{NamespacedName: req.NamespacedName.String(), Type: AddUpdateEvent, TypeMeta: watchMeta}
 
 			return reconcile.Result{}, nil
 		}),
@@ -216,7 +237,7 @@ func (w *watcher) newWatcherController(ca cache.Cache) (controller.Controller, e
 	}
 
 	if err := c.Watch(source.NewKindWithCache(w.runtimeObject, ca), &handler.EnqueueRequestForObject{}, w.predicate()); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, errCreateCache)
 	}
 
 	return c, nil
@@ -240,13 +261,5 @@ func (w *watcher) shouldWatch(obj client.Object) bool {
 	w.toWatchMu.RLock()
 	defer w.toWatchMu.RUnlock()
 
-	key := objectKeyToStoreKey(obj)
-	return w.toWatch.Has(key)
-}
-
-func objectKeyToStoreKey(k client.Object) string {
-	if k.GetNamespace() == "" {
-		return "default/" + k.GetName()
-	}
-	return k.GetNamespace() + "/" + k.GetName()
+	return w.toWatch.Has(client.ObjectKeyFromObject(obj).String())
 }

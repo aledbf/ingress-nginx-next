@@ -9,24 +9,27 @@ import (
 )
 
 type Services struct {
-	watcher *watcher
+	watcher Watcher
 
 	references reference.ObjectRefMap
 }
 
-func NewServiceWatcher(ctx context.Context, eventCh chan Event, mgr manager.Manager) (*Services, error) {
+func NewServiceWatcher(eventCh chan Event, mgr manager.Manager) (*Services, error) {
 	services := &Services{
 		references: reference.NewObjectRefMap(),
 	}
-	w, err := NewWatcher("services", &corev1.Service{}, services.isReferenced, eventCh, mgr)
+
+	var err error
+	services.watcher, err = NewWatcher("services", &corev1.Service{}, services.isReferenced, eventCh, mgr)
 	if err != nil {
 		return nil, err
 	}
 
-	go w.Start(ctx)
-
-	services.watcher = w
 	return services, nil
+}
+
+func (sw *Services) Start(ctx context.Context) {
+	sw.watcher.Start(ctx)
 }
 
 func (sw *Services) Get(key string) (*corev1.Service, error) {
@@ -49,13 +52,12 @@ func (sw *Services) Add(key string, services []string) {
 
 func (sw *Services) RemoveReferencedBy(key string) {
 	if !sw.references.HasConsumer(key) {
-		// there is no service references
 		return
 	}
 
 	services := sw.references.ReferencedBy(key)
 	for _, service := range services {
-		sw.watcher.remove(service)
+		sw.watcher.Remove(service)
 		sw.references.Delete(service)
 	}
 }

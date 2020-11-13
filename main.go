@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	klog "k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -45,7 +46,7 @@ func init() {
 }
 
 func main() {
-	//klog.InitFlags(nil)
+	klog.InitFlags(nil)
 
 	var (
 		metricsAddr          string
@@ -64,8 +65,6 @@ func main() {
 		//o.Level = logzap.NewAtomicLevelAt(logzap.DebugLevel)
 	}))
 
-	profiler.Register(ctrl.Log)
-
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:             scheme,
 		MetricsBindAddress: metricsAddr,
@@ -76,6 +75,8 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
+
+	profiler.Register(mgr)
 
 	//kubeClient
 	_, err = kubernetes.NewForConfig(ctrl.GetConfigOrDie())
@@ -105,11 +106,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	serviceWatcher, err := watch.NewServiceWatcher(ctx, events, mgr)
+	serviceWatcher, err := watch.NewServiceWatcher(events, mgr)
 	if err != nil {
 		setupLog.Error(err, "unable to start service watcher")
 		os.Exit(1)
 	}
+	go serviceWatcher.Start(ctx)
 
 	ingressDependencies := make(map[string]*ingress.Dependencies)
 

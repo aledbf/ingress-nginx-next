@@ -9,7 +9,7 @@ import (
 )
 
 type Configmaps struct {
-	watcher *watcher
+	watcher Watcher
 
 	references reference.ObjectRefMap
 }
@@ -49,13 +49,12 @@ func (cw *Configmaps) Add(ingress string, configmaps []string) {
 
 func (cw *Configmaps) RemoveReferencedBy(ingress string) {
 	if !cw.references.HasConsumer(ingress) {
-		// there is no configmap references
 		return
 	}
 
 	configmaps := cw.references.ReferencedBy(ingress)
 	for _, configmap := range configmaps {
-		//cw.watcher.remove(configmap)
+		cw.watcher.Remove(configmap)
 		cw.references.Delete(configmap)
 	}
 }

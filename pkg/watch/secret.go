@@ -11,7 +11,7 @@ import (
 )
 
 type Secrets struct {
-	watcher *watcher
+	watcher Watcher
 
 	references reference.ObjectRefMap
 }
@@ -59,13 +59,12 @@ func (sw *Secrets) Add(key string, secrets []string) {
 
 func (sw *Secrets) RemoveReferencedBy(key string) {
 	if !sw.references.HasConsumer(key) {
-		// there is no secret references
 		return
 	}
 
 	secrets := sw.references.ReferencedBy(key)
 	for _, secret := range secrets {
-		sw.watcher.remove(secret)
+		sw.watcher.Remove(secret)
 		sw.references.Delete(secret)
 	}
 }

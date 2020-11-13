@@ -6,8 +6,11 @@ require (
 	github.com/go-logr/logr v0.2.1
 	github.com/onsi/ginkgo v1.14.2
 	github.com/onsi/gomega v1.10.3
+	github.com/pkg/errors v0.9.1
 	k8s.io/api v0.19.3
 	k8s.io/apimachinery v0.19.3
 	k8s.io/client-go v0.19.3
+	k8s.io/klog v1.0.0
+	k8s.io/klog/v2 v2.2.0
 	sigs.k8s.io/controller-runtime v0.7.0-alpha.6.0.20201112182909-33f1d80ebeaa
 )

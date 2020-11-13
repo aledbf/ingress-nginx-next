@@ -50,6 +50,8 @@ var _ reconcile.Reconciler = &IngressReconciler{}
 func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	log := log.FromContext(ctx)
 
+	log.Info("Sync loop", "ingress", req.NamespacedName)
+
 	ingress := req.NamespacedName.String()
 
 	// fetch  from the cache
@@ -66,7 +68,6 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request
 		delete(r.Dependencies, ingress)
 		return reconcile.Result{}, nil
 	}
-
 	if err != nil {
 		return reconcile.Result{}, err
 	}
