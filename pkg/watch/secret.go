@@ -5,9 +5,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/ingress-nginx-next/pkg/reference"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	local_types "k8s.io/ingress-nginx-next/pkg/types"
 )
 
 type Secrets struct {
@@ -35,29 +37,33 @@ func NewSecretWatcher(ctx context.Context, eventCh chan Event, mgr manager.Manag
 	return secrets, nil
 }
 
-func (sw *Secrets) Get(key string) (*corev1.Secret, error) {
-	obj, err := sw.watcher.Get(key)
-	if err != nil {
-		return nil, err
-	}
+func (sw *Secrets) Get(key types.NamespacedName) (*corev1.Secret, error) {
+	/*
+		obj, err := sw.watcher.Get(key)
+		if err != nil {
+			return nil, err
+		}
 
-	secret := &corev1.Secret{}
+		secret := &corev1.Secret{}
 
-	opm := obj.(*metav1.PartialObjectMetadata)
-	opm.ObjectMeta.DeepCopyInto(&secret.ObjectMeta)
+		opm := obj.(*metav1.PartialObjectMetadata)
+		opm.ObjectMeta.DeepCopyInto(&secret.ObjectMeta)
 
-	return secret, nil
+		return secret, nil
+	*/
+
+	return nil, nil
 }
 
-func (sw *Secrets) Add(key string, secrets []string) {
+func (sw *Secrets) Add(key types.NamespacedName, secrets []string) {
 	for _, secret := range secrets {
-		sw.references.Insert(key, secret)
+		sw.references.Insert(key, local_types.ParseNamespacedName(secret))
 	}
 
 	sw.watcher.Add(key, secrets)
 }
 
-func (sw *Secrets) RemoveReferencedBy(key string) {
+func (sw *Secrets) RemoveReferencedBy(key types.NamespacedName) {
 	if !sw.references.HasConsumer(key) {
 		return
 	}
@@ -69,7 +75,7 @@ func (sw *Secrets) RemoveReferencedBy(key string) {
 	}
 }
 
-func (sw *Secrets) isReferenced(key string) bool {
+func (sw *Secrets) isReferenced(key types.NamespacedName) bool {
 	references := sw.references.Reference(key)
 	return len(references) > 0
 }

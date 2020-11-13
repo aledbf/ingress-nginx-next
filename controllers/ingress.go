@@ -20,6 +20,7 @@ import (
 
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -33,7 +34,7 @@ import (
 type IngressReconciler struct {
 	client.Client
 
-	Dependencies map[string]*ingressutil.Dependencies
+	Dependencies map[types.NamespacedName]*ingressutil.Dependencies
 
 	ConfigmapWatcher *watch.Configmaps
 	EndpointsWatcher *watch.Endpoints
@@ -52,20 +53,20 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request
 
 	log.Info("Sync loop", "ingress", req.NamespacedName)
 
-	ingress := req.NamespacedName.String()
+	key := req.NamespacedName
 
 	// fetch  from the cache
 	ing := &networking.Ingress{}
 	err := r.Get(ctx, req.NamespacedName, ing)
 	if errors.IsNotFound(err) {
-		log.Info("Ingress removed", "ingress", ingress)
+		log.Info("Ingress removed", "ingress", key)
 
-		r.ConfigmapWatcher.RemoveReferencedBy(ingress)
-		r.EndpointsWatcher.RemoveReferencedBy(ingress)
-		r.SecretWatcher.RemoveReferencedBy(ingress)
-		r.ServiceWatcher.RemoveReferencedBy(ingress)
+		r.ConfigmapWatcher.RemoveReferencedBy(key)
+		r.EndpointsWatcher.RemoveReferencedBy(key)
+		r.SecretWatcher.RemoveReferencedBy(key)
+		r.ServiceWatcher.RemoveReferencedBy(key)
 
-		delete(r.Dependencies, ingress)
+		delete(r.Dependencies, key)
 		return reconcile.Result{}, nil
 	}
 	if err != nil {
@@ -74,13 +75,13 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request
 
 	deps := ingressutil.Parse(ing)
 
-	r.ConfigmapWatcher.Add(ingress, deps.Configmaps)
-	r.EndpointsWatcher.Add(ingress, deps.Services)
-	r.SecretWatcher.Add(ingress, deps.Secrets)
-	r.ServiceWatcher.Add(ingress, deps.Services)
+	r.ConfigmapWatcher.Add(key, deps.Configmaps)
+	r.EndpointsWatcher.Add(key, deps.Services)
+	r.SecretWatcher.Add(key, deps.Secrets)
+	r.ServiceWatcher.Add(key, deps.Services)
 
 	log.Info("Ingress dependencies", "ingress", deps)
-	r.Dependencies[ingress] = deps
+	r.Dependencies[key] = deps
 
 	return reconcile.Result{}, nil
 }

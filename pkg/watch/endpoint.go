@@ -4,8 +4,11 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/ingress-nginx-next/pkg/reference"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	local_types "k8s.io/ingress-nginx-next/pkg/types"
 )
 
 type Endpoints struct {
@@ -29,25 +32,25 @@ func NewEndpointsWatcher(ctx context.Context, eventCh chan Event, mgr manager.Ma
 	return endpoints, nil
 }
 
-func (sw *Endpoints) Get(key string) (*corev1.Endpoints, error) {
-	obj, err := sw.watcher.Get(key)
+func (sw *Endpoints) Get(key types.NamespacedName) (*corev1.Endpoints, error) {
+	endpoints := &corev1.Endpoints{}
+	err := sw.watcher.Get(context.Background(), key, endpoints)
 	if err != nil {
 		return nil, err
 	}
 
-	svc := obj.(*corev1.Endpoints)
-	return svc, nil
+	return endpoints, nil
 }
 
-func (sw *Endpoints) Add(key string, endpoints []string) {
+func (sw *Endpoints) Add(key types.NamespacedName, endpoints []string) {
 	for _, endpoint := range endpoints {
-		sw.references.Insert(key, endpoint)
+		sw.references.Insert(key, local_types.ParseNamespacedName(endpoint))
 	}
 
 	sw.watcher.Add(key, endpoints)
 }
 
-func (sw *Endpoints) RemoveReferencedBy(key string) {
+func (sw *Endpoints) RemoveReferencedBy(key types.NamespacedName) {
 	if !sw.references.HasConsumer(key) {
 		return
 	}
@@ -59,7 +62,7 @@ func (sw *Endpoints) RemoveReferencedBy(key string) {
 	}
 }
 
-func (sw *Endpoints) isReferenced(key string) bool {
+func (sw *Endpoints) isReferenced(key types.NamespacedName) bool {
 	references := sw.references.Reference(key)
 	return len(references) > 0
 }

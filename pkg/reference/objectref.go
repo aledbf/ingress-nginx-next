@@ -20,55 +20,58 @@ import (
 	"encoding/json"
 	"sync"
 
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+
+	local_types "k8s.io/ingress-nginx-next/pkg/types"
 )
 
 // ObjectRefMap is a map of references from object(s) to object (1:n). It is
 // used to keep track of which data objects (Secrets) are used within Ingress
 // objects.
 type ObjectRefMap interface {
-	Insert(consumer string, ref ...string)
-	Delete(consumer string)
+	Insert(consumer types.NamespacedName, ref ...types.NamespacedName)
+	Delete(consumer types.NamespacedName)
 	Len() int
-	Has(ref string) bool
-	HasConsumer(consumer string) bool
-	Reference(ref string) []string
-	ReferencedBy(consumer string) []string
+	Has(ref types.NamespacedName) bool
+	HasConsumer(consumer types.NamespacedName) bool
+	Reference(ref types.NamespacedName) []types.NamespacedName
+	ReferencedBy(consumer types.NamespacedName) []types.NamespacedName
 }
 
 type objectRefMap struct {
 	sync.Mutex
-	v map[string]sets.String
+	v map[types.NamespacedName]sets.String
 }
 
 // NewObjectRefMap returns a new ObjectRefMap.
 func NewObjectRefMap() ObjectRefMap {
 	return &objectRefMap{
-		v: make(map[string]sets.String),
+		v: make(map[types.NamespacedName]sets.String),
 	}
 }
 
 // Insert adds a consumer to one or more referenced objects.
-func (o *objectRefMap) Insert(consumer string, ref ...string) {
+func (o *objectRefMap) Insert(consumer types.NamespacedName, ref ...types.NamespacedName) {
 	o.Lock()
 	defer o.Unlock()
 
 	for _, r := range ref {
 		if _, ok := o.v[r]; !ok {
-			o.v[r] = sets.NewString(consumer)
+			o.v[r] = sets.NewString(consumer.String())
 			continue
 		}
-		o.v[r].Insert(consumer)
+		o.v[r].Insert(consumer.String())
 	}
 }
 
 // Delete deletes a consumer from all referenced objects.
-func (o *objectRefMap) Delete(consumer string) {
+func (o *objectRefMap) Delete(consumer types.NamespacedName) {
 	o.Lock()
 	defer o.Unlock()
 
 	for ref, consumers := range o.v {
-		consumers.Delete(consumer)
+		consumers.Delete(consumer.String())
 		if consumers.Len() == 0 {
 			delete(o.v, ref)
 		}
@@ -81,7 +84,7 @@ func (o *objectRefMap) Len() int {
 }
 
 // Has returns whether the given object is referenced by any other object.
-func (o *objectRefMap) Has(ref string) bool {
+func (o *objectRefMap) Has(ref types.NamespacedName) bool {
 	o.Lock()
 	defer o.Unlock()
 
@@ -92,44 +95,56 @@ func (o *objectRefMap) Has(ref string) bool {
 }
 
 // HasConsumer returns whether the store contains the given consumer.
-func (o *objectRefMap) HasConsumer(consumer string) bool {
+func (o *objectRefMap) HasConsumer(consumer types.NamespacedName) bool {
 	o.Lock()
 	defer o.Unlock()
 
 	for _, consumers := range o.v {
-		if consumers.Has(consumer) {
+		if consumers.Has(consumer.String()) {
 			return true
 		}
 	}
+
 	return false
 }
 
 // Reference returns all objects referencing the given object.
-func (o *objectRefMap) Reference(ref string) []string {
+func (o *objectRefMap) Reference(ref types.NamespacedName) []types.NamespacedName {
 	o.Lock()
 	defer o.Unlock()
 
 	consumers, ok := o.v[ref]
 	if !ok {
-		return make([]string, 0)
+		return make([]types.NamespacedName, 0)
 	}
-	return consumers.List()
+
+	return toNamespacedNameList(consumers.List())
 }
 
 // ReferencedBy returns all objects referenced by the given object.
-func (o *objectRefMap) ReferencedBy(consumer string) []string {
+func (o *objectRefMap) ReferencedBy(consumer types.NamespacedName) []types.NamespacedName {
 	o.Lock()
 	defer o.Unlock()
 
-	refs := make([]string, 0)
+	refs := make([]types.NamespacedName, 0)
 	for ref, consumers := range o.v {
-		if consumers.Has(consumer) {
+		if consumers.Has(consumer.String()) {
 			refs = append(refs, ref)
 		}
 	}
+
 	return refs
 }
 
 func (o *objectRefMap) MarshalJSON() ([]byte, error) {
 	return json.Marshal(o.v)
+}
+
+func toNamespacedNameList(items []string) []types.NamespacedName {
+	namespacedNames := []types.NamespacedName{}
+	for _, item := range items {
+		namespacedNames = append(namespacedNames, local_types.ParseNamespacedName(item))
+	}
+
+	return namespacedNames
 }

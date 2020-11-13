@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
@@ -33,17 +35,23 @@ const (
 	errWatch            = "cannot setup watch"
 )
 
+type Watcher interface {
+	Add(key types.NamespacedName, keys []string)
+	Get(ctx context.Context, key types.NamespacedName, obj client.Object) error
+	Remove(key types.NamespacedName)
+	Start(ctx context.Context)
+}
+
 type watcher struct {
 	name string
 
 	events chan Event
 
-	watcherCtx    context.Context
-	watcherCancel context.CancelFunc
+	cache cache.Cache
 
-	watching  map[string]client.Object
-	watcherMu *sync.RWMutex
+	stopCtrlrFunc context.CancelFunc
 
+	// Set of keys of of the objects to watch
 	toWatch   sets.String
 	toWatchMu *sync.RWMutex
 
@@ -54,24 +62,10 @@ type watcher struct {
 
 	runtimeObject client.Object
 
-	isReferencedFn func(key string) bool
+	isReferencedFn func(key types.NamespacedName) bool
 }
 
-type Watcher interface {
-	Add(ingress string, keys []string)
-	Get(key string) (client.Object, error)
-	Remove(key string)
-	Start(ctx context.Context)
-}
-
-func (w *watcher) addOrUpdate(key string, obj client.Object) {
-	w.watcherMu.Lock()
-	defer w.watcherMu.Unlock()
-
-	w.watching[key] = obj
-}
-
-func (w *watcher) Add(ingress string, keys []string) {
+func (w *watcher) Add(key types.NamespacedName, keys []string) {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
 
@@ -87,40 +81,29 @@ func (w *watcher) Add(ingress string, keys []string) {
 	w.reloadQueue.Add("add")
 }
 
-func (w *watcher) Remove(key string) {
+func (w *watcher) Remove(key types.NamespacedName) {
 	w.toWatchMu.Lock()
 	defer w.toWatchMu.Unlock()
 
-	w.watcherMu.Lock()
-	defer w.watcherMu.Unlock()
-
-	if !w.toWatch.Has(key) {
+	if !w.toWatch.Has(key.String()) {
 		return
 	}
 
-	delete(w.watching, key)
 	if w.isReferencedFn(key) {
 		return
 	}
 
-	w.toWatch.Delete(key)
+	w.toWatch.Delete(key.String())
 
 	// reload controller
 	w.reloadQueue.Add("remove")
 }
 
-func (w *watcher) Get(key string) (client.Object, error) {
-	w.watcherMu.RLock()
-	defer w.watcherMu.RUnlock()
-
-	if obj, exists := w.watching[key]; exists {
-		return obj, nil
-	}
-
-	return nil, fmt.Errorf("object %v does not exists", key)
+func (w *watcher) Get(ctx context.Context, key types.NamespacedName, obj client.Object) error {
+	return w.cache.Get(ctx, key, obj)
 }
 
-func NewWatcher(name string, runObj client.Object, isReferencedFn func(key string) bool, eventCh chan Event, mgr manager.Manager) (Watcher, error) {
+func NewWatcher(name string, runObj client.Object, isReferencedFn func(key types.NamespacedName) bool, eventCh chan Event, mgr manager.Manager) (Watcher, error) {
 	w := &watcher{
 		name: name,
 
@@ -130,9 +113,6 @@ func NewWatcher(name string, runObj client.Object, isReferencedFn func(key strin
 
 		events: eventCh,
 
-		watching:  make(map[string]client.Object),
-		watcherMu: &sync.RWMutex{},
-
 		mgr: mgr,
 
 		toWatch:   sets.NewString(),
@@ -140,69 +120,75 @@ func NewWatcher(name string, runObj client.Object, isReferencedFn func(key strin
 
 		log: ctrl.Log.WithName("watcher").WithName(name),
 
-		reloadQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), fmt.Sprintf("%v-queue", name)),
+		reloadQueue: workqueue.NewNamedRateLimitingQueue(
+			workqueue.DefaultControllerRateLimiter(), fmt.Sprintf("%v-queue", name),
+		),
 	}
 
 	return w, nil
 }
 
 func (w *watcher) Start(ctx context.Context) {
-	w.watcherCtx, w.watcherCancel = context.WithCancel(ctx)
-	wait.UntilWithContext(ctx, func(ctx context.Context) {
-		for w.processNextItem(ctx) {
-		}
-	}, time.Second)
+	wait.UntilWithContext(ctx, w.processNextItem, 0)
 }
 
-func (w *watcher) processNextItem(ctx context.Context) bool {
+func (w *watcher) processNextItem(ctx context.Context) {
 	key, quit := w.reloadQueue.Get()
 	if quit {
-		return false
+		return
 	}
 
-	// cancel running context
-	w.watcherCancel()
+	var ctrlCtx context.Context
+	ctrlCtx, w.stopCtrlrFunc = context.WithCancel(ctx)
 
-	// create a new context
-	w.watcherCtx, w.watcherCancel = context.WithCancel(ctx)
-
-	ca, err := cache.New(w.mgr.GetConfig(), cache.Options{
+	controllerCache, err := cache.New(w.mgr.GetConfig(), cache.Options{
 		Scheme: w.mgr.GetScheme(),
 		Mapper: w.mgr.GetRESTMapper(),
 	})
-
 	if err != nil {
 		w.log.Error(err, errCreateCache)
-		return false
+		return
 	}
 
-	// start a new watcher
-	c, err := w.newController(ca)
+	ctrlr, err := w.newController(controllerCache)
 	if err != nil {
 		w.log.Error(err, errCreateController)
-		return false
+		return
 	}
 
 	go func() {
-		if err := c.Start(w.watcherCtx); err != nil {
+		if err := ctrlr.Start(ctrlCtx); err != nil {
 			w.log.Error(err, errCrashController)
 		}
 	}()
 
 	go func() {
-		if err = ca.Start(w.watcherCtx); err != nil {
+		if err = controllerCache.Start(ctrlCtx); err != nil {
 			w.log.Error(err, errCreateCache)
 		}
 	}()
 
-	if ok := ca.WaitForCacheSync(w.watcherCtx); !ok {
+	if ok := controllerCache.WaitForCacheSync(ctrlCtx); !ok {
 		w.log.Error(err, errCrashCache)
-		return false
+		return
 	}
 
 	w.reloadQueue.Done(key)
 
-	return true
+	listObj := &unstructured.UnstructuredList{}
+	listObj.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "",
+		Version: "v1",
+		Kind:    "ServiceList",
+	})
+
+	err = controllerCache.List(context.Background(), listObj)
+	if err != nil {
+		w.log.Error(err, errCreateCache)
+	}
+
+	w.log.Info("Services", "list", listObj)
+
 }
 
 func (w *watcher) newController(ca cache.Cache) (controller.Controller, error) {
@@ -217,17 +203,14 @@ func (w *watcher) newController(ca cache.Cache) (controller.Controller, error) {
 			apiError := w.mgr.GetClient().Get(context.Background(), req.NamespacedName, obj)
 			if apiError != nil {
 				if apierrors.IsNotFound(apiError) {
-					w.events <- Event{NamespacedName: req.NamespacedName.String(), Type: RemoveEvent, TypeMeta: watchMeta}
-					w.Remove(req.NamespacedName.String())
+					w.events <- Event{NamespacedName: req.NamespacedName, Type: RemoveEvent, TypeMeta: watchMeta}
 					return reconcile.Result{}, nil
 				}
 
 				return reconcile.Result{}, apiError
 			}
 
-			w.addOrUpdate(req.NamespacedName.String(), obj)
-
-			w.events <- Event{NamespacedName: req.NamespacedName.String(), Type: AddUpdateEvent, TypeMeta: watchMeta}
+			w.events <- Event{NamespacedName: req.NamespacedName, Type: AddUpdateEvent, TypeMeta: watchMeta}
 
 			return reconcile.Result{}, nil
 		}),

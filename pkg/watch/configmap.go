@@ -4,8 +4,11 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/ingress-nginx-next/pkg/reference"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	local_types "k8s.io/ingress-nginx-next/pkg/types"
 )
 
 type Configmaps struct {
@@ -29,25 +32,25 @@ func NewConfigmapWatcher(ctx context.Context, eventCh chan Event, mgr manager.Ma
 	return configmaps, nil
 }
 
-func (cw *Configmaps) Get(key string) (*corev1.ConfigMap, error) {
-	obj, err := cw.watcher.Get(key)
+func (cw *Configmaps) Get(key types.NamespacedName) (*corev1.ConfigMap, error) {
+	cmap := &corev1.ConfigMap{}
+	err := cw.watcher.Get(context.Background(), key, cmap)
 	if err != nil {
 		return nil, err
 	}
 
-	svc := obj.(*corev1.ConfigMap)
-	return svc, nil
+	return cmap, nil
 }
 
-func (cw *Configmaps) Add(ingress string, configmaps []string) {
+func (cw *Configmaps) Add(ingress types.NamespacedName, configmaps []string) {
 	for _, configmap := range configmaps {
-		cw.references.Insert(ingress, configmap)
+		cw.references.Insert(ingress, local_types.ParseNamespacedName(configmap))
 	}
 
 	cw.watcher.Add(ingress, configmaps)
 }
 
-func (cw *Configmaps) RemoveReferencedBy(ingress string) {
+func (cw *Configmaps) RemoveReferencedBy(ingress types.NamespacedName) {
 	if !cw.references.HasConsumer(ingress) {
 		return
 	}
@@ -59,7 +62,7 @@ func (cw *Configmaps) RemoveReferencedBy(ingress string) {
 	}
 }
 
-func (cw *Configmaps) isReferenced(key string) bool {
+func (cw *Configmaps) isReferenced(key types.NamespacedName) bool {
 	references := cw.references.Reference(key)
 	return len(references) > 0
 }

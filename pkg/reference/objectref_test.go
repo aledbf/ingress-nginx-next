@@ -16,18 +16,24 @@ limitations under the License.
 
 package reference
 
-import "testing"
+import (
+	"testing"
+
+	"k8s.io/apimachinery/pkg/types"
+
+	local_types "k8s.io/ingress-nginx-next/pkg/types"
+)
 
 func TestObjectRefMapOperations(t *testing.T) {
 	orm := NewObjectRefMap()
 
 	items := []struct {
-		consumer string
-		ref      []string
+		consumer types.NamespacedName
+		ref      []types.NamespacedName
 	}{
-		{"ns/ingress1", []string{"ns/tls1"}},
-		{"ns/ingress2", []string{"ns/tls1", "ns/tls2"}},
-		{"ns/ingress3", []string{"ns/tls1", "ns/tls2", "ns/tls3"}},
+		{types.NamespacedName{Namespace: "ns", Name: "ingress1"}, []types.NamespacedName{{Namespace: "ns", Name: "tls1"}}},
+		{types.NamespacedName{Namespace: "ns", Name: "ingress2"}, []types.NamespacedName{{Namespace: "ns", Name: "tls1"}, {Namespace: "ns", Name: "tls2"}}},
+		{types.NamespacedName{Namespace: "ns", Name: "ingress3"}, []types.NamespacedName{{Namespace: "ns", Name: "tls1"}, {Namespace: "ns", Name: "tls2"}, {Namespace: "ns", Name: "tls3"}}},
 	}
 
 	// populate map with test data
@@ -39,27 +45,27 @@ func TestObjectRefMapOperations(t *testing.T) {
 	}
 
 	// add already existing item
-	orm.Insert("ns/ingress1", "ns/tls1")
-	if l := len(orm.ReferencedBy("ns/ingress1")); l != 1 {
+	orm.Insert(local_types.ParseNamespacedName("ns/ingress1"), local_types.ParseNamespacedName("ns/tls1"))
+	if l := len(orm.ReferencedBy(local_types.ParseNamespacedName("ns/ingress1"))); l != 1 {
 		t.Error("Expected existing item not to be added again")
 	}
 
 	// find consumer by name
-	if !orm.HasConsumer("ns/ingress1") {
+	if !orm.HasConsumer(local_types.ParseNamespacedName("ns/ingress1")) {
 		t.Error("Expected the \"ns/ingress1\" consumer to exist in the map")
 	}
 
 	// count references to object
-	if l := len(orm.Reference("ns/tls1")); l != 3 {
+	if l := len(orm.Reference(local_types.ParseNamespacedName("ns/tls1"))); l != 3 {
 		t.Errorf("Expected \"ns/tls1\" to be referenced by 3 objects (got %d)", l)
 	}
 
 	// delete consumer
-	orm.Delete("ns/ingress3")
+	orm.Delete(local_types.ParseNamespacedName("ns/ingress3"))
 	if l := orm.Len(); l != 2 {
 		t.Errorf("Expected 2 referenced objects (got %d)", l)
 	}
-	if orm.Has("ns/tls3") {
+	if orm.Has(local_types.ParseNamespacedName("ns/tls3")) {
 		t.Error("Expected \"ns/tls3\" not to be referenced")
 	}
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"k8s.io/ingress-nginx-next/pkg/ingress"
@@ -34,7 +35,7 @@ type SyncController struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 
-	Dependencies map[string]*ingress.Dependencies
+	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
 	ConfigmapWatcher *watch.Configmaps
 	EndpointsWatcher *watch.Endpoints

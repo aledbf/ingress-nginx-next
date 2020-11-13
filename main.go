@@ -21,6 +21,7 @@ import (
 
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	klog "k8s.io/klog/v2"
@@ -113,7 +114,7 @@ func main() {
 	}
 	go serviceWatcher.Start(ctx)
 
-	ingressDependencies := make(map[string]*ingress.Dependencies)
+	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 
 	go func() {
 		(&controllers.SyncController{
