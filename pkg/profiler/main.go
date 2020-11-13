@@ -1,38 +1,21 @@
 package profiler
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/pprof"
-	"os"
 
-	"github.com/go-logr/logr"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
-func Register(log logr.Logger) {
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/heap", pprof.Index)
-	mux.HandleFunc("/debug/pprof/mutex", pprof.Index)
-	mux.HandleFunc("/debug/pprof/goroutine", pprof.Index)
-	mux.HandleFunc("/debug/pprof/threadcreate", pprof.Index)
-	mux.HandleFunc("/debug/pprof/block", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-
-	server := &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:6060"),
-		Handler: mux,
-	}
-
-	go func() {
-		err := server.ListenAndServe()
-		if err != nil {
-			log.Error(err, "unable to start profile server")
-			os.Exit(1)
-		}
-	}()
+func Register(mgr manager.Manager) {
+	mgr.AddMetricsExtraHandler("/debug/pprof", http.HandlerFunc(pprof.Index))
+	mgr.AddMetricsExtraHandler("/debug/pprof/heap", http.HandlerFunc(pprof.Index))
+	mgr.AddMetricsExtraHandler("/debug/pprof/mutex", http.HandlerFunc(pprof.Index))
+	mgr.AddMetricsExtraHandler("/debug/pprof/goroutine", http.HandlerFunc(pprof.Index))
+	mgr.AddMetricsExtraHandler("/debug/pprof/threadcreate", http.HandlerFunc(pprof.Index))
+	mgr.AddMetricsExtraHandler("/debug/pprof/block", http.HandlerFunc(pprof.Index))
+	mgr.AddMetricsExtraHandler("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
+	mgr.AddMetricsExtraHandler("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
+	mgr.AddMetricsExtraHandler("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
+	mgr.AddMetricsExtraHandler("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
 }
