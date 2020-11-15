@@ -22,9 +22,10 @@ import (
 )
 
 type Watcher interface {
-	Add(key types.NamespacedName, keys []types.NamespacedName)
+	Add(ingress types.NamespacedName, refs []types.NamespacedName)
+	Remove(ingress types.NamespacedName, refs ...types.NamespacedName)
+
 	Get(key types.NamespacedName) (runtime.Object, error)
-	Remove(key types.NamespacedName, keys ...types.NamespacedName)
 }
 
 type watcher struct {
@@ -39,7 +40,7 @@ type watcher struct {
 	references   reference.ObjectRefMap
 	referencesMu *sync.RWMutex
 
-	data map[types.NamespacedName]*cacheEntry
+	cache map[types.NamespacedName]*cacheEntry
 }
 
 type cacheEntry struct {
@@ -61,7 +62,7 @@ func New(groupKind schema.GroupVersionKind, eventCh chan Event, mgr manager.Mana
 		references:   reference.NewObjectRefMap(),
 		referencesMu: &sync.RWMutex{},
 
-		data: make(map[types.NamespacedName]*cacheEntry),
+		cache: make(map[types.NamespacedName]*cacheEntry),
 	}
 }
 
@@ -71,12 +72,12 @@ func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedN
 
 	for _, key := range keys {
 		w.references.Insert(fromIngress, key)
-		if _, ok := w.data[key]; ok {
+		if _, ok := w.cache[key]; ok {
 			continue
 		}
 
 		stopCh := make(chan struct{})
-		w.data[key] = &cacheEntry{stopCh: stopCh}
+		w.cache[key] = &cacheEntry{stopCh: stopCh}
 
 		initialRevision := "1"
 
@@ -99,8 +100,8 @@ func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedN
 }
 
 func (w *watcher) Get(key types.NamespacedName) (runtime.Object, error) {
-	if state, exists := w.data[key]; exists {
-		return state.obj, nil
+	if cacheEntry, exists := w.cache[key]; exists {
+		return cacheEntry.obj, nil
 	}
 
 	return nil, fmt.Errorf("object %v does not exists", key)
@@ -124,22 +125,22 @@ func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.Namespa
 		w.log.Info("deleting", "key", key)
 
 		// close channel (terminates goroutine)
-		close(w.data[key].stopCh)
+		close(w.cache[key].stopCh)
 		// delete data
-		delete(w.data, key)
+		delete(w.cache, key)
 	}
 }
 
 func (w *watcher) newWatch(key types.NamespacedName, eventCh chan Event, stopCh <-chan struct{}, initialRevision string) {
 	listWatch, err := createStructuredListWatch(key, w.groupKind, w.mgr.GetRESTMapper())
 	if err != nil {
-		w.log.Error(err, "creating new watch", "key", key)
+		w.log.Error(err, "creating new watcher", "key", key)
 		return
 	}
 
 	retryWatcher, err := apiwatch.NewRetryWatcher(initialRevision, listWatch)
 	if err != nil {
-		w.log.Error(err, "creating new watch", "key", key)
+		w.log.Error(err, "creating new watcher", "key", key)
 		return
 	}
 
@@ -148,42 +149,36 @@ func (w *watcher) newWatch(key types.NamespacedName, eventCh chan Event, stopCh 
 		retryWatcher.Stop()
 	}()
 
-loop:
 	for {
 		select {
 		case event := <-retryWatcher.ResultChan():
 			switch event.Type {
 			case watch.Added, watch.Modified:
-				eventCh <- Event{NamespacedName: key, Type: AddOrUpdateEvent, TypeMeta: toTypeMeta(event.Object)}
-				w.data[key].obj = event.Object
+				eventCh <- Event{NamespacedName: key, Type: AddOrUpdateEvent, TypeMeta: convertToTypeMeta(event.Object)}
+				w.cache[key].obj = event.Object
 			case watch.Deleted:
-				eventCh <- Event{NamespacedName: key, Type: RemoveEvent, TypeMeta: toTypeMeta(event.Object)}
-				w.data[key].obj = nil
-			case watch.Bookmark:
-				// nothing to do
+				eventCh <- Event{NamespacedName: key, Type: RemoveEvent, TypeMeta: convertToTypeMeta(event.Object)}
+				w.cache[key].obj = nil
 			case watch.Error:
 				errObject := apierrors.FromObject(event.Object)
 				statusErr, ok := errObject.(*apierrors.StatusError)
 				if !ok {
-					w.log.Error(errObject, "received error watching object")
+					w.log.Error(errObject, "watching object")
 					continue
 				}
 
 				status := statusErr.ErrStatus
-				w.log.Error(nil, "received error watching object", "status", status.Reason, "message", status.Message)
-				if status.Reason == "Expired" {
-					break loop
-				}
+				w.log.Error(nil, "watching object", "status", status.Reason, "message", status.Message)
 			default:
 			}
 		case <-stopCh:
-			w.log.Info("closing service watch", "key", key)
-			break loop
+			w.log.V(2).Info("Closing object watcher", "key", key)
+			return
 		}
 	}
 }
 
-func toTypeMeta(obj runtime.Object) metav1.TypeMeta {
+func convertToTypeMeta(obj runtime.Object) metav1.TypeMeta {
 	gvks, _, _ := scheme.ObjectKinds(obj)
 	kind := gvks[0]
 

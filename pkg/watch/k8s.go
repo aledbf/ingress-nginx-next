@@ -34,7 +34,7 @@ func init() {
 func createStructuredListWatch(key types.NamespacedName, gvk schema.GroupVersionKind, mapper meta.RESTMapper) (*cache.ListWatch, error) {
 	restConfig, err := config.GetConfig()
 
-	client, err := RESTClientForGVK(gvk, restConfig, codecs)
+	client, err := restClientForGVK(gvk, restConfig, codecs)
 	if err != nil {
 		return nil, err
 	}
@@ -44,24 +44,25 @@ func createStructuredListWatch(key types.NamespacedName, gvk schema.GroupVersion
 		return nil, err
 	}
 
+	isNamespaceScoped := key.Namespace != kcorev1.NamespaceAll && mapping.Scope.Name() != meta.RESTScopeNameRoot
+
 	ctx := context.TODO()
 	return &cache.ListWatch{
-		// Setup the watch function
+		// setup the watch function
 		WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
-			// Watch needs to be set to true separately
 			opts.Watch = true
 			// only watch one object
 			opts.FieldSelector = fmt.Sprintf("metadata.name=%s", key.Name)
-			isNamespaceScoped := key.Namespace != kcorev1.NamespaceAll && mapping.Scope.Name() != meta.RESTScopeNameRoot
+			// build watch
 			return client.Get().NamespaceIfScoped(key.Namespace, isNamespaceScoped).Resource(mapping.Resource.Resource).VersionedParams(&opts, paramCodec).Watch(ctx)
 		},
 	}, nil
 }
 
-// RESTClientForGVK constructs a new rest.Interface capable of accessing the resource associated
+// restClientForGVK constructs a new rest.Interface capable of accessing the resource associated
 // with the given GroupVersionKind. The REST client will be configured to use the negotiated serializer from
 // baseConfig, if set, otherwise a default serializer will be set.
-func RESTClientForGVK(gvk schema.GroupVersionKind, baseConfig *rest.Config, codecs serializer.CodecFactory) (rest.Interface, error) {
+func restClientForGVK(gvk schema.GroupVersionKind, baseConfig *rest.Config, codecs serializer.CodecFactory) (rest.Interface, error) {
 	cfg := createRestConfig(gvk, baseConfig)
 	if cfg.NegotiatedSerializer == nil {
 		cfg.NegotiatedSerializer = serializer.WithoutConversionCodecFactory{CodecFactory: codecs}
@@ -75,13 +76,16 @@ func createRestConfig(gvk schema.GroupVersionKind, baseConfig *rest.Config) *res
 
 	cfg := rest.CopyConfig(baseConfig)
 	cfg.GroupVersion = &gv
+
 	if gvk.Group == "" {
 		cfg.APIPath = "/api"
 	} else {
 		cfg.APIPath = "/apis"
 	}
+
 	if cfg.UserAgent == "" {
 		cfg.UserAgent = rest.DefaultKubernetesUserAgent()
 	}
+
 	return cfg
 }

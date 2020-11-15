@@ -7,12 +7,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-// Dependencies contains information defined in an Ingress object
+// Dependencies contains the information defined in an Ingress object
 type Dependencies struct {
 	Configmaps []types.NamespacedName `json:"configmaps"`
-	Endpoints  []types.NamespacedName `json:"endpoints"`
 	Secrets    []types.NamespacedName `json:"secrets"`
 	Services   []types.NamespacedName `json:"services"`
+	Endpoints  []types.NamespacedName `json:"endpoints"`
 
 	Annotations interface{} `json:"annotations"`
 }
@@ -37,11 +37,13 @@ func extractAnnotations(ingress *networking.Ingress) interface{} {
 	return nil
 }
 
+// annotations that reference configmaps
 var configmapAnnotations = sets.NewString(
 	"auth-proxy-set-header",
 	"fastcgi-params-configmap",
 )
 
+// configmapsFromAnnotations extracts a list of NamespacedName that reference Configmaps
 func configmapsFromAnnotations(ingress *networking.Ingress) []types.NamespacedName {
 	configmaps := make([]types.NamespacedName, 0)
 	for name := range ingress.GetAnnotations() {
@@ -53,6 +55,7 @@ func configmapsFromAnnotations(ingress *networking.Ingress) []types.NamespacedNa
 	return configmaps
 }
 
+// annotations that reference secrets
 var secretsAnnotations = sets.NewString(
 	"auth-secret",
 	"auth-tls-secret",
@@ -60,6 +63,7 @@ var secretsAnnotations = sets.NewString(
 	"secure-verify-ca-secret",
 )
 
+// secretsFromAnnotations extracts a list of NamespacedName that reference Secrets
 func secretsFromAnnotations(ingress *networking.Ingress) []types.NamespacedName {
 	secrets := make([]types.NamespacedName, 0)
 	for name := range ingress.GetAnnotations() {

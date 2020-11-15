@@ -33,7 +33,6 @@ import (
 	"k8s.io/ingress-nginx-next/pkg/ingress"
 	"k8s.io/ingress-nginx-next/pkg/profiler"
 	"k8s.io/ingress-nginx-next/pkg/watch"
-	// +kubebuilder:scaffold:imports
 )
 
 var (
@@ -44,7 +43,6 @@ var (
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = networking.AddToScheme(scheme)
-	// +kubebuilder:scaffold:scheme
 }
 
 func main() {
@@ -58,13 +56,12 @@ func main() {
 
 	flag.BoolVar(&development, "development-log", true, "Configure logs in development format.")
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
+	flag.BoolVar(&enableLeaderElection, "enable-leader-election", true,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(func(o *zap.Options) {
 		o.Development = development
-		//o.Level = logzap.NewAtomicLevelAt(logzap.DebugLevel)
 	}))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
@@ -88,7 +85,6 @@ func main() {
 	}
 
 	events := make(chan watch.Event)
-	ctx := ctrl.SetupSignalHandler()
 
 	configmapWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Configmap"), events, mgr)
 	endpointsWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Endpoints"), events, mgr)
@@ -97,6 +93,7 @@ func main() {
 
 	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 
+	ctx := ctrl.SetupSignalHandler()
 	go func() {
 		(&controllers.SyncController{
 			Client: mgr.GetClient(),

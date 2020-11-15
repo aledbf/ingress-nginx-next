@@ -8,7 +8,7 @@ import (
 )
 
 func Register(mgr manager.Manager) {
-	mgr.AddMetricsExtraHandler("/debug/pprof", http.HandlerFunc(pprof.Index))
+	mgr.AddMetricsExtraHandler("/debug/pprof/", http.HandlerFunc(pprof.Index))
 	mgr.AddMetricsExtraHandler("/debug/pprof/heap", http.HandlerFunc(pprof.Index))
 	mgr.AddMetricsExtraHandler("/debug/pprof/mutex", http.HandlerFunc(pprof.Index))
 	mgr.AddMetricsExtraHandler("/debug/pprof/goroutine", http.HandlerFunc(pprof.Index))
