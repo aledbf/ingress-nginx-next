@@ -30,7 +30,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 }
 
-// newListWatch returns a new ListWatch object that can be used to create a SharedIndexInformer.
+// createStructuredListWatch returns a new ListWatch object that can be used to create a Watch
 func createStructuredListWatch(key types.NamespacedName, gvk schema.GroupVersionKind, mapper meta.RESTMapper) (*cache.ListWatch, error) {
 	restConfig, err := config.GetConfig()
 

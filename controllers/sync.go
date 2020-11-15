@@ -23,8 +23,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"k8s.io/ingress-nginx-next/pkg/ingress"
-	"k8s.io/ingress-nginx-next/pkg/watch"
+	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
+	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
 	// +kubebuilder:scaffold:imports
 )
 

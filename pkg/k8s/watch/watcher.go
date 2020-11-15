@@ -49,7 +49,7 @@ type cacheEntry struct {
 	obj runtime.Object
 }
 
-func New(groupKind schema.GroupVersionKind, eventCh chan Event, mgr manager.Manager) Watcher {
+func SingleObject(groupKind schema.GroupVersionKind, eventCh chan Event, mgr manager.Manager) Watcher {
 	return &watcher{
 		groupKind: groupKind,
 

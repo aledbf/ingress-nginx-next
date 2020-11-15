@@ -21,7 +21,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 
-	local_types "k8s.io/ingress-nginx-next/pkg/types"
+	local_types "k8s.io/ingress-nginx-next/pkg/k8s/types"
 )
 
 func TestObjectRefMapOperations(t *testing.T) {

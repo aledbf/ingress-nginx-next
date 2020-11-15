@@ -25,16 +25,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	ingressutil "k8s.io/ingress-nginx-next/pkg/ingress"
-	"k8s.io/ingress-nginx-next/pkg/watch"
-	// +kubebuilder:scaffold:imports
+	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
+	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
 )
 
 // IngressReconciler reconciles a Nginx object
 type IngressReconciler struct {
 	client.Client
 
-	Dependencies map[types.NamespacedName]*ingressutil.Dependencies
+	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
 	ConfigmapWatcher watch.Watcher
 	EndpointsWatcher watch.Watcher
@@ -75,7 +74,7 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request
 		return reconcile.Result{}, err
 	}
 
-	deps := ingressutil.Parse(ing)
+	deps := ingress.Parse(ing)
 
 	r.ConfigmapWatcher.Add(key, deps.Configmaps)
 	r.SecretWatcher.Add(key, deps.Secrets)

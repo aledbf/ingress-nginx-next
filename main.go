@@ -18,6 +18,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	kcorev1 "k8s.io/api/core/v1"
 	networking "k8s.io/api/networking/v1beta1"
@@ -30,9 +31,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"k8s.io/ingress-nginx-next/controllers"
-	"k8s.io/ingress-nginx-next/pkg/ingress"
-	"k8s.io/ingress-nginx-next/pkg/profiler"
-	"k8s.io/ingress-nginx-next/pkg/watch"
+	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
+	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
+	"k8s.io/ingress-nginx-next/pkg/util/profiler"
+	"k8s.io/ingress-nginx-next/pkg/util/signals"
 )
 
 var (
@@ -56,7 +58,7 @@ func main() {
 
 	flag.BoolVar(&development, "development-log", true, "Configure logs in development format.")
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "enable-leader-election", true,
+	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	flag.Parse()
 
@@ -86,14 +88,14 @@ func main() {
 
 	events := make(chan watch.Event)
 
-	configmapWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Configmap"), events, mgr)
-	endpointsWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Endpoints"), events, mgr)
-	secretWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Secret"), events, mgr)
-	serviceWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Service"), events, mgr)
+	configmapWatcher := watch.SingleObject(kcorev1.SchemeGroupVersion.WithKind("Configmap"), events, mgr)
+	endpointsWatcher := watch.SingleObject(kcorev1.SchemeGroupVersion.WithKind("Endpoints"), events, mgr)
+	secretWatcher := watch.SingleObject(kcorev1.SchemeGroupVersion.WithKind("Secret"), events, mgr)
+	serviceWatcher := watch.SingleObject(kcorev1.SchemeGroupVersion.WithKind("Service"), events, mgr)
 
 	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 
-	ctx := ctrl.SetupSignalHandler()
+	ctx := signals.SetupSignalHandler()
 	go func() {
 		(&controllers.SyncController{
 			Client: mgr.GetClient(),
@@ -134,5 +136,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// +kubebuilder:scaffold:builder
+	<-ctx.Done()
+	// additional shutdown tasks
+	time.Sleep(10 * time.Second)
+
+	setupLog.Info("done")
 }

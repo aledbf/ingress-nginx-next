@@ -4,7 +4,7 @@ import (
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/types"
 
-	"k8s.io/ingress-nginx-next/pkg/ingress/annotations/parser"
+	"k8s.io/ingress-nginx-next/pkg/k8s/ingress/annotations/parser"
 )
 
 type Ingress struct {
