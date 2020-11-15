@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/go-logr/logr"
@@ -16,14 +17,13 @@ import (
 	"k8s.io/ingress-nginx-next/pkg/reference"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 type Watcher interface {
 	Add(key types.NamespacedName, keys []types.NamespacedName)
-	Get(key types.NamespacedName) (client.Object, error)
+	Get(key types.NamespacedName) (runtime.Object, error)
 	Remove(key types.NamespacedName, keys ...types.NamespacedName)
 }
 
@@ -81,8 +81,8 @@ func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedN
 		initialRevision := "1"
 
 		if w.groupKind.Kind == "Endpoints" {
-			// In contrast to the raw watch, RetryWatcher is expected to deliver all events even
-			// when the underlying raw watch gets closed prematurely
+			// RetryWatcher is expected to deliver all events but cannot recover from "too old resource version"
+			// For this reason we need to get the last version for the namespace and not the object
 			// (https://github.com/kubernetes/kubernetes/pull/93777#discussion_r467932080).
 			cfg, _ := config.GetConfig()
 			kubeclientset := kubernetes.NewForConfigOrDie(cfg)
@@ -98,8 +98,12 @@ func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedN
 	}
 }
 
-func (w *watcher) Get(key types.NamespacedName) (client.Object, error) {
-	return nil, nil
+func (w *watcher) Get(key types.NamespacedName) (runtime.Object, error) {
+	if state, exists := w.data[key]; exists {
+		return state.obj, nil
+	}
+
+	return nil, fmt.Errorf("object %v does not exists", key)
 }
 
 func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.NamespacedName) {
