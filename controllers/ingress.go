@@ -36,10 +36,10 @@ type IngressReconciler struct {
 
 	Dependencies map[types.NamespacedName]*ingressutil.Dependencies
 
-	ConfigmapWatcher *watch.Configmaps
-	EndpointsWatcher *watch.Endpoints
-	SecretWatcher    *watch.Secrets
-	ServiceWatcher   *watch.Services
+	ConfigmapWatcher watch.Watcher
+	EndpointsWatcher watch.Watcher
+	SecretWatcher    watch.Watcher
+	ServiceWatcher   watch.Watcher
 }
 
 // Implement reconcile.Reconciler so the controller can reconcile objects
@@ -51,22 +51,24 @@ var _ reconcile.Reconciler = &IngressReconciler{}
 func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	log := log.FromContext(ctx)
 
-	log.Info("Sync loop", "ingress", req.NamespacedName)
-
 	key := req.NamespacedName
+	log.Info("Sync loop", "ingress", key)
 
 	// fetch  from the cache
 	ing := &networking.Ingress{}
-	err := r.Get(ctx, req.NamespacedName, ing)
+	err := r.Get(ctx, key, ing)
 	if errors.IsNotFound(err) {
 		log.Info("Ingress removed", "ingress", key)
 
-		r.ConfigmapWatcher.RemoveReferencedBy(key)
-		r.EndpointsWatcher.RemoveReferencedBy(key)
-		r.SecretWatcher.RemoveReferencedBy(key)
-		r.ServiceWatcher.RemoveReferencedBy(key)
+		deps := r.Dependencies[key]
+
+		r.ConfigmapWatcher.Remove(key, deps.Configmaps...)
+		r.SecretWatcher.Remove(key, deps.Secrets...)
+		r.ServiceWatcher.Remove(key, deps.Services...)
+		r.EndpointsWatcher.Remove(key, deps.Endpoints...)
 
 		delete(r.Dependencies, key)
+
 		return reconcile.Result{}, nil
 	}
 	if err != nil {
@@ -76,9 +78,9 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request
 	deps := ingressutil.Parse(ing)
 
 	r.ConfigmapWatcher.Add(key, deps.Configmaps)
-	r.EndpointsWatcher.Add(key, deps.Services)
 	r.SecretWatcher.Add(key, deps.Secrets)
 	r.ServiceWatcher.Add(key, deps.Services)
+	r.EndpointsWatcher.Add(key, deps.Endpoints)
 
 	log.Info("Ingress dependencies", "ingress", deps)
 	r.Dependencies[key] = deps

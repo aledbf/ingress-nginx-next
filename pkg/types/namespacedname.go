@@ -1,4 +1,4 @@
-package namespacedname
+package types
 
 import (
 	"strings"

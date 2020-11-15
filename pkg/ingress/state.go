@@ -2,17 +2,17 @@
 package ingress
 
 import (
-	"fmt"
-
 	networking "k8s.io/api/networking/v1beta1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // Dependencies contains information defined in an Ingress object
 type Dependencies struct {
-	Services   []string `json:"services"`
-	Secrets    []string `json:"secrets"`
-	Configmaps []string `json:"configmaps"`
+	Configmaps []types.NamespacedName `json:"configmaps"`
+	Endpoints  []types.NamespacedName `json:"endpoints"`
+	Secrets    []types.NamespacedName `json:"secrets"`
+	Services   []types.NamespacedName `json:"services"`
 
 	Annotations interface{} `json:"annotations"`
 }
@@ -26,6 +26,7 @@ func Parse(ingress *networking.Ingress) *Dependencies {
 
 	return &Dependencies{
 		Services:    extractServices(ingress),
+		Endpoints:   extractServices(ingress),
 		Secrets:     secrets,
 		Configmaps:  configmapsFromAnnotations(ingress),
 		Annotations: extractAnnotations(ingress),
@@ -41,11 +42,11 @@ var configmapAnnotations = sets.NewString(
 	"fastcgi-params-configmap",
 )
 
-func configmapsFromAnnotations(ingress *networking.Ingress) []string {
-	configmaps := make([]string, 0)
+func configmapsFromAnnotations(ingress *networking.Ingress) []types.NamespacedName {
+	configmaps := make([]types.NamespacedName, 0)
 	for name := range ingress.GetAnnotations() {
 		if configmapAnnotations.Has(name) {
-			configmaps = append(configmaps, fmt.Sprintf("%v/%v", ingress.Namespace, name))
+			configmaps = append(configmaps, types.NamespacedName{Namespace: ingress.Namespace, Name: name})
 		}
 	}
 
@@ -59,36 +60,36 @@ var secretsAnnotations = sets.NewString(
 	"secure-verify-ca-secret",
 )
 
-func secretsFromAnnotations(ingress *networking.Ingress) []string {
-	secrets := make([]string, 0)
+func secretsFromAnnotations(ingress *networking.Ingress) []types.NamespacedName {
+	secrets := make([]types.NamespacedName, 0)
 	for name := range ingress.GetAnnotations() {
 		if secretsAnnotations.Has(name) {
-			secrets = append(secrets, fmt.Sprintf("%v/%v", ingress.Namespace, name))
+			secrets = append(secrets, types.NamespacedName{Namespace: ingress.Namespace, Name: name})
 		}
 	}
 
 	return secrets
 }
 
-func extractServices(ingress *networking.Ingress) []string {
-	services := []string{}
+func extractServices(ingress *networking.Ingress) []types.NamespacedName {
+	services := []types.NamespacedName{}
 	for _, rule := range ingress.Spec.Rules {
 		for _, p := range rule.IngressRuleValue.HTTP.Paths {
-			services = append(services, fmt.Sprintf("%v/%v", ingress.Namespace, p.Backend.ServiceName))
+			services = append(services, types.NamespacedName{Namespace: ingress.Namespace, Name: p.Backend.ServiceName})
 		}
 	}
 
 	return services
 }
 
-func extractSecrets(ingress *networking.Ingress) []string {
+func extractSecrets(ingress *networking.Ingress) []types.NamespacedName {
 	if len(ingress.Spec.TLS) == 0 {
-		return []string{}
+		return []types.NamespacedName{}
 	}
 
-	secrets := []string{}
+	secrets := []types.NamespacedName{}
 	for _, tls := range ingress.Spec.TLS {
-		secrets = append(secrets, fmt.Sprintf("%v/%v", ingress.Namespace, tls.SecretName))
+		secrets = append(secrets, types.NamespacedName{Namespace: ingress.Namespace, Name: tls.SecretName})
 	}
 
 	return secrets

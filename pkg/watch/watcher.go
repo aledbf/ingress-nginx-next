@@ -2,247 +2,189 @@ package watch
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/go-logr/logr"
-	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/util/workqueue"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
+	apiwatch "k8s.io/client-go/tools/watch"
+	"k8s.io/ingress-nginx-next/pkg/reference"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
-)
 
-const (
-	errCreateCache      = "cannot create new cache"
-	errCreateController = "cannot create new controller"
-	errCrashCache       = "cache error"
-	errCrashController  = "controller error"
-	errWatch            = "cannot setup watch"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 type Watcher interface {
-	Add(key types.NamespacedName, keys []string)
-	Get(ctx context.Context, key types.NamespacedName, obj client.Object) error
-	Remove(key types.NamespacedName)
-	Start(ctx context.Context)
+	Add(key types.NamespacedName, keys []types.NamespacedName)
+	Get(key types.NamespacedName) (client.Object, error)
+	Remove(key types.NamespacedName, keys ...types.NamespacedName)
 }
 
 type watcher struct {
-	name string
+	groupKind schema.GroupVersionKind
 
 	events chan Event
 
-	cache cache.Cache
-
-	stopCtrlrFunc context.CancelFunc
-
-	// Set of keys of of the objects to watch
-	toWatch   sets.String
-	toWatchMu *sync.RWMutex
-
 	mgr manager.Manager
+
 	log logr.Logger
 
-	reloadQueue workqueue.RateLimitingInterface
+	references   reference.ObjectRefMap
+	referencesMu *sync.RWMutex
 
-	runtimeObject client.Object
-
-	isReferencedFn func(key types.NamespacedName) bool
+	data map[types.NamespacedName]*cacheEntry
 }
 
-func (w *watcher) Add(key types.NamespacedName, keys []string) {
-	w.toWatchMu.Lock()
-	defer w.toWatchMu.Unlock()
+type cacheEntry struct {
+	stopCh chan struct{}
 
-	for _, key := range keys {
-		if w.toWatch.Has(key) {
-			continue
-		}
-
-		w.toWatch.Insert(key)
-	}
-
-	// reload controller
-	w.reloadQueue.Add("add")
+	obj runtime.Object
 }
 
-func (w *watcher) Remove(key types.NamespacedName) {
-	w.toWatchMu.Lock()
-	defer w.toWatchMu.Unlock()
-
-	if !w.toWatch.Has(key.String()) {
-		return
-	}
-
-	if w.isReferencedFn(key) {
-		return
-	}
-
-	w.toWatch.Delete(key.String())
-
-	// reload controller
-	w.reloadQueue.Add("remove")
-}
-
-func (w *watcher) Get(ctx context.Context, key types.NamespacedName, obj client.Object) error {
-	return w.cache.Get(ctx, key, obj)
-}
-
-func NewWatcher(name string, runObj client.Object, isReferencedFn func(key types.NamespacedName) bool, eventCh chan Event, mgr manager.Manager) (Watcher, error) {
-	w := &watcher{
-		name: name,
-
-		isReferencedFn: isReferencedFn,
-
-		runtimeObject: runObj,
+func New(groupKind schema.GroupVersionKind, eventCh chan Event, mgr manager.Manager) Watcher {
+	return &watcher{
+		groupKind: groupKind,
 
 		events: eventCh,
 
 		mgr: mgr,
 
-		toWatch:   sets.NewString(),
-		toWatchMu: &sync.RWMutex{},
+		log: ctrl.Log.WithName("watcher").WithName(groupKind.Kind),
 
-		log: ctrl.Log.WithName("watcher").WithName(name),
+		references:   reference.NewObjectRefMap(),
+		referencesMu: &sync.RWMutex{},
 
-		reloadQueue: workqueue.NewNamedRateLimitingQueue(
-			workqueue.DefaultControllerRateLimiter(), fmt.Sprintf("%v-queue", name),
-		),
+		data: make(map[types.NamespacedName]*cacheEntry),
 	}
-
-	return w, nil
 }
 
-func (w *watcher) Start(ctx context.Context) {
-	wait.UntilWithContext(ctx, w.processNextItem, 0)
-}
+func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedName) {
+	w.referencesMu.Lock()
+	defer w.referencesMu.Unlock()
 
-func (w *watcher) processNextItem(ctx context.Context) {
-	key, quit := w.reloadQueue.Get()
-	if quit {
-		return
-	}
-
-	var ctrlCtx context.Context
-	ctrlCtx, w.stopCtrlrFunc = context.WithCancel(ctx)
-
-	controllerCache, err := cache.New(w.mgr.GetConfig(), cache.Options{
-		Scheme: w.mgr.GetScheme(),
-		Mapper: w.mgr.GetRESTMapper(),
-	})
-	if err != nil {
-		w.log.Error(err, errCreateCache)
-		return
-	}
-
-	ctrlr, err := w.newController(controllerCache)
-	if err != nil {
-		w.log.Error(err, errCreateController)
-		return
-	}
-
-	go func() {
-		if err := ctrlr.Start(ctrlCtx); err != nil {
-			w.log.Error(err, errCrashController)
+	for _, key := range keys {
+		w.references.Insert(fromIngress, key)
+		if _, ok := w.data[key]; ok {
+			continue
 		}
-	}()
 
-	go func() {
-		if err = controllerCache.Start(ctrlCtx); err != nil {
-			w.log.Error(err, errCreateCache)
-		}
-	}()
+		stopCh := make(chan struct{})
+		w.data[key] = &cacheEntry{stopCh: stopCh}
 
-	if ok := controllerCache.WaitForCacheSync(ctrlCtx); !ok {
-		w.log.Error(err, errCrashCache)
-		return
-	}
+		initialRevision := "1"
 
-	w.reloadQueue.Done(key)
-
-	listObj := &unstructured.UnstructuredList{}
-	listObj.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "",
-		Version: "v1",
-		Kind:    "ServiceList",
-	})
-
-	err = controllerCache.List(context.Background(), listObj)
-	if err != nil {
-		w.log.Error(err, errCreateCache)
-	}
-
-	w.log.Info("Services", "list", listObj)
-
-}
-
-func (w *watcher) newController(ca cache.Cache) (controller.Controller, error) {
-	c, err := controller.NewUnmanaged(fmt.Sprintf("%v-controller", w.name), w.mgr, controller.Options{
-		Reconciler: reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-			obj := w.runtimeObject.DeepCopyObject().(client.Object)
-			watchMeta := metav1.TypeMeta{
-				Kind:       obj.GetObjectKind().GroupVersionKind().Kind,
-				APIVersion: obj.GetObjectKind().GroupVersionKind().Version,
+		if w.groupKind.Kind == "Endpoints" {
+			// In contrast to the raw watch, RetryWatcher is expected to deliver all events even
+			// when the underlying raw watch gets closed prematurely
+			// (https://github.com/kubernetes/kubernetes/pull/93777#discussion_r467932080).
+			cfg, _ := config.GetConfig()
+			kubeclientset := kubernetes.NewForConfigOrDie(cfg)
+			initResource, err := kubeclientset.CoreV1().Endpoints(key.Namespace).List(context.Background(), metav1.ListOptions{})
+			if err != nil {
+				w.log.Error(err, "obtaining endpoint")
+			} else {
+				initialRevision = initResource.GetResourceVersion()
 			}
+		}
 
-			apiError := w.mgr.GetClient().Get(context.Background(), req.NamespacedName, obj)
-			if apiError != nil {
-				if apierrors.IsNotFound(apiError) {
-					w.events <- Event{NamespacedName: req.NamespacedName, Type: RemoveEvent, TypeMeta: watchMeta}
-					return reconcile.Result{}, nil
+		go w.newWatch(key, w.events, stopCh, initialRevision)
+	}
+}
+
+func (w *watcher) Get(key types.NamespacedName) (client.Object, error) {
+	return nil, nil
+}
+
+func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.NamespacedName) {
+	w.referencesMu.Lock()
+	defer w.referencesMu.Unlock()
+
+	if !w.references.HasConsumer(fromIngress) {
+		return
+	}
+	w.references.Delete(fromIngress)
+
+	for _, key := range keys {
+		if len(w.references.Reference(key)) > 0 {
+			// still referenced
+			continue
+		}
+
+		w.log.Info("deleting", "key", key)
+
+		// close channel (terminates goroutine)
+		close(w.data[key].stopCh)
+		// delete data
+		delete(w.data, key)
+	}
+}
+
+func (w *watcher) newWatch(key types.NamespacedName, eventCh chan Event, stopCh <-chan struct{}, initialRevision string) {
+	listWatch, err := createStructuredListWatch(key, w.groupKind, w.mgr.GetRESTMapper())
+	if err != nil {
+		w.log.Error(err, "creating new watch", "key", key)
+		return
+	}
+
+	retryWatcher, err := apiwatch.NewRetryWatcher(initialRevision, listWatch)
+	if err != nil {
+		w.log.Error(err, "creating new watch", "key", key)
+		return
+	}
+
+	defer func() {
+		w.log.V(2).Info("Stopping watcher", "key", key)
+		retryWatcher.Stop()
+	}()
+
+loop:
+	for {
+		select {
+		case event := <-retryWatcher.ResultChan():
+			switch event.Type {
+			case watch.Added, watch.Modified:
+				eventCh <- Event{NamespacedName: key, Type: AddOrUpdateEvent, TypeMeta: toTypeMeta(event.Object)}
+				w.data[key].obj = event.Object
+			case watch.Deleted:
+				eventCh <- Event{NamespacedName: key, Type: RemoveEvent, TypeMeta: toTypeMeta(event.Object)}
+				w.data[key].obj = nil
+			case watch.Bookmark:
+				// nothing to do
+			case watch.Error:
+				errObject := apierrors.FromObject(event.Object)
+				statusErr, ok := errObject.(*apierrors.StatusError)
+				if !ok {
+					w.log.Error(errObject, "received error watching object")
+					continue
 				}
 
-				return reconcile.Result{}, apiError
+				status := statusErr.ErrStatus
+				w.log.Error(nil, "received error watching object", "status", status.Reason, "message", status.Message)
+				if status.Reason == "Expired" {
+					break loop
+				}
+			default:
 			}
-
-			w.events <- Event{NamespacedName: req.NamespacedName, Type: AddUpdateEvent, TypeMeta: watchMeta}
-
-			return reconcile.Result{}, nil
-		}),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if err := c.Watch(source.NewKindWithCache(w.runtimeObject, ca), &handler.EnqueueRequestForObject{}, w.predicate()); err != nil {
-		return nil, errors.Wrap(err, errCreateCache)
-	}
-
-	return c, nil
-}
-
-func (w *watcher) predicate() predicate.Predicate {
-	return predicate.Funcs{
-		CreateFunc: func(e event.CreateEvent) bool {
-			return w.shouldWatch(e.Object)
-		},
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			return w.shouldWatch(e.ObjectNew)
-		},
-		DeleteFunc: func(e event.DeleteEvent) bool {
-			return w.shouldWatch(e.Object)
-		},
+		case <-stopCh:
+			w.log.Info("closing service watch", "key", key)
+			break loop
+		}
 	}
 }
 
-func (w *watcher) shouldWatch(obj client.Object) bool {
-	w.toWatchMu.RLock()
-	defer w.toWatchMu.RUnlock()
+func toTypeMeta(obj runtime.Object) metav1.TypeMeta {
+	gvks, _, _ := scheme.ObjectKinds(obj)
+	kind := gvks[0]
 
-	return w.toWatch.Has(client.ObjectKeyFromObject(obj).String())
+	return metav1.TypeMeta{
+		Kind:       kind.Kind,
+		APIVersion: kind.GroupVersion().String(),
+	}
 }

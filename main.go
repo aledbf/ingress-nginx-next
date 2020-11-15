@@ -19,6 +19,7 @@ import (
 	"flag"
 	"os"
 
+	kcorev1 "k8s.io/api/core/v1"
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -89,30 +90,10 @@ func main() {
 	events := make(chan watch.Event)
 	ctx := ctrl.SetupSignalHandler()
 
-	configmapWatcher, err := watch.NewConfigmapWatcher(ctx, events, mgr)
-	if err != nil {
-		setupLog.Error(err, "unable to start configmap watcher")
-		os.Exit(1)
-	}
-
-	endpointsWatcher, err := watch.NewEndpointsWatcher(ctx, events, mgr)
-	if err != nil {
-		setupLog.Error(err, "unable to start endpoints watcher")
-		os.Exit(1)
-	}
-
-	secretWatcher, err := watch.NewSecretWatcher(ctx, events, mgr)
-	if err != nil {
-		setupLog.Error(err, "unable to start secret watcher")
-		os.Exit(1)
-	}
-
-	serviceWatcher, err := watch.NewServiceWatcher(events, mgr)
-	if err != nil {
-		setupLog.Error(err, "unable to start service watcher")
-		os.Exit(1)
-	}
-	go serviceWatcher.Start(ctx)
+	configmapWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Configmap"), events, mgr)
+	endpointsWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Endpoints"), events, mgr)
+	secretWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Secret"), events, mgr)
+	serviceWatcher := watch.New(kcorev1.SchemeGroupVersion.WithKind("Service"), events, mgr)
 
 	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 
