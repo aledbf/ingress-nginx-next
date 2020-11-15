@@ -21,9 +21,7 @@ import (
 	"sync"
 
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
-
-	local_types "k8s.io/ingress-nginx-next/pkg/types"
+	"k8s.io/ingress-nginx-next/pkg/util/sets"
 )
 
 // ObjectRefMap is a map of references from object(s) to object (1:n). It is
@@ -41,13 +39,13 @@ type ObjectRefMap interface {
 
 type objectRefMap struct {
 	sync.Mutex
-	v map[types.NamespacedName]sets.String
+	v map[types.NamespacedName]sets.NamespacedName
 }
 
 // NewObjectRefMap returns a new ObjectRefMap.
 func NewObjectRefMap() ObjectRefMap {
 	return &objectRefMap{
-		v: make(map[types.NamespacedName]sets.String),
+		v: make(map[types.NamespacedName]sets.NamespacedName),
 	}
 }
 
@@ -58,10 +56,10 @@ func (o *objectRefMap) Insert(consumer types.NamespacedName, ref ...types.Namesp
 
 	for _, r := range ref {
 		if _, ok := o.v[r]; !ok {
-			o.v[r] = sets.NewString(consumer.String())
+			o.v[r] = sets.NewNamespacedName(consumer)
 			continue
 		}
-		o.v[r].Insert(consumer.String())
+		o.v[r].Insert(consumer)
 	}
 }
 
@@ -71,7 +69,7 @@ func (o *objectRefMap) Delete(consumer types.NamespacedName) {
 	defer o.Unlock()
 
 	for ref, consumers := range o.v {
-		consumers.Delete(consumer.String())
+		consumers.Delete(consumer)
 		if consumers.Len() == 0 {
 			delete(o.v, ref)
 		}
@@ -91,6 +89,7 @@ func (o *objectRefMap) Has(ref types.NamespacedName) bool {
 	if _, ok := o.v[ref]; ok {
 		return true
 	}
+
 	return false
 }
 
@@ -100,7 +99,7 @@ func (o *objectRefMap) HasConsumer(consumer types.NamespacedName) bool {
 	defer o.Unlock()
 
 	for _, consumers := range o.v {
-		if consumers.Has(consumer.String()) {
+		if consumers.Has(consumer) {
 			return true
 		}
 	}
@@ -118,7 +117,7 @@ func (o *objectRefMap) Reference(ref types.NamespacedName) []types.NamespacedNam
 		return make([]types.NamespacedName, 0)
 	}
 
-	return toNamespacedNameList(consumers.List())
+	return consumers.List()
 }
 
 // ReferencedBy returns all objects referenced by the given object.
@@ -128,7 +127,7 @@ func (o *objectRefMap) ReferencedBy(consumer types.NamespacedName) []types.Names
 
 	refs := make([]types.NamespacedName, 0)
 	for ref, consumers := range o.v {
-		if consumers.Has(consumer.String()) {
+		if consumers.Has(consumer) {
 			refs = append(refs, ref)
 		}
 	}
@@ -138,13 +137,4 @@ func (o *objectRefMap) ReferencedBy(consumer types.NamespacedName) []types.Names
 
 func (o *objectRefMap) MarshalJSON() ([]byte, error) {
 	return json.Marshal(o.v)
-}
-
-func toNamespacedNameList(items []string) []types.NamespacedName {
-	namespacedNames := []types.NamespacedName{}
-	for _, item := range items {
-		namespacedNames = append(namespacedNames, local_types.ParseNamespacedName(item))
-	}
-
-	return namespacedNames
 }
