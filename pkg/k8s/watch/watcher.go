@@ -14,11 +14,12 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	apiwatch "k8s.io/client-go/tools/watch"
-	"k8s.io/ingress-nginx-next/pkg/reference"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	"k8s.io/ingress-nginx-next/pkg/util/reference"
 )
 
 type Watcher interface {
@@ -95,7 +96,7 @@ func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedN
 			}
 		}
 
-		go w.newWatch(key, w.events, stopCh, initialRevision)
+		go w.newSingleWatch(key, w.events, stopCh, initialRevision)
 	}
 }
 
@@ -114,6 +115,7 @@ func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.Namespa
 	if !w.references.HasConsumer(fromIngress) {
 		return
 	}
+
 	w.references.Delete(fromIngress)
 
 	for _, key := range keys {
@@ -131,8 +133,8 @@ func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.Namespa
 	}
 }
 
-func (w *watcher) newWatch(key types.NamespacedName, eventCh chan Event, stopCh <-chan struct{}, initialRevision string) {
-	listWatch, err := createStructuredListWatch(key, w.groupKind, w.mgr.GetRESTMapper())
+func (w *watcher) newSingleWatch(key types.NamespacedName, eventCh chan Event, stopCh <-chan struct{}, initialRevision string) {
+	listWatch, err := createSingleWatch(key, w.groupKind, w.mgr.GetRESTMapper())
 	if err != nil {
 		w.log.Error(err, "creating new watcher", "key", key)
 		return

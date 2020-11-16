@@ -30,8 +30,8 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 }
 
-// createStructuredListWatch returns a new ListWatch object that can be used to create a Watch
-func createStructuredListWatch(key types.NamespacedName, gvk schema.GroupVersionKind, mapper meta.RESTMapper) (*cache.ListWatch, error) {
+// createSingleWatch returns a new ListWatch for a single object
+func createSingleWatch(key types.NamespacedName, gvk schema.GroupVersionKind, mapper meta.RESTMapper) (*cache.ListWatch, error) {
 	restConfig, err := config.GetConfig()
 
 	client, err := restClientForGVK(gvk, restConfig, codecs)

@@ -98,9 +98,7 @@ func main() {
 	ctx := signals.SetupSignalHandler()
 	go func() {
 		(&controllers.SyncController{
-			Client: mgr.GetClient(),
-			Log:    ctrl.Log.WithName("controllers").WithName("sync"),
-			Scheme: mgr.GetScheme(),
+			Log: ctrl.Log.WithName("controllers").WithName("event-loop"),
 
 			Dependencies: ingressDependencies,
 

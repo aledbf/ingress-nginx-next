@@ -19,21 +19,16 @@ import (
 	"context"
 
 	"github.com/go-logr/logr"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
 	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
 	// +kubebuilder:scaffold:imports
 )
 
-// SyncController reconciles objects related to NGINX
+// SyncController reconciles objects used in Ingress instances
 type SyncController struct {
-	client.Client
-
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	Log logr.Logger
 
 	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
