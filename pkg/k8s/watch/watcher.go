@@ -1,23 +1,19 @@
 package watch
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
 	"github.com/go-logr/logr"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	kv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/kubernetes"
-	apiwatch "k8s.io/client-go/tools/watch"
-	ctrl "sigs.k8s.io/controller-runtime"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 
-	"sigs.k8s.io/controller-runtime/pkg/client/config"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"k8s.io/ingress-nginx-next/pkg/util/reference"
 )
@@ -30,11 +26,11 @@ type Watcher interface {
 }
 
 type watcher struct {
-	groupKind schema.GroupVersionKind
+	plural string
 
 	events chan Event
 
-	mgr manager.Manager
+	restClient rest.Interface
 
 	log logr.Logger
 
@@ -47,23 +43,23 @@ type watcher struct {
 type cacheEntry struct {
 	stopCh chan struct{}
 
-	obj runtime.Object
+	state cache.Store
 }
 
-func SingleObject(groupKind schema.GroupVersionKind, eventCh chan Event, mgr manager.Manager) Watcher {
+func SingleObject(plural string, eventCh chan Event, restClient rest.Interface) Watcher {
 	return &watcher{
-		groupKind: groupKind,
+		plural: plural,
 
 		events: eventCh,
 
-		mgr: mgr,
+		restClient: restClient,
 
-		log: ctrl.Log.WithName("watcher").WithName(groupKind.Kind),
+		log: ctrl.Log.WithName("watcher").WithName(plural),
+
+		cache: make(map[types.NamespacedName]*cacheEntry),
 
 		references:   reference.NewObjectRefMap(),
 		referencesMu: &sync.RWMutex{},
-
-		cache: make(map[types.NamespacedName]*cacheEntry),
 	}
 }
 
@@ -78,31 +74,28 @@ func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedN
 		}
 
 		stopCh := make(chan struct{})
-		w.cache[key] = &cacheEntry{stopCh: stopCh}
+		state := cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc)
 
-		initialRevision := "1"
+		keyCache := w.newSingleCache(key, state)
+		go keyCache.Run(stopCh)
 
-		if w.groupKind.Kind == "Endpoints" {
-			// RetryWatcher is expected to deliver all events but cannot recover from "too old resource version"
-			// For this reason we need to get the last version for the namespace and not the object
-			// (https://github.com/kubernetes/kubernetes/pull/93777#discussion_r467932080).
-			cfg, _ := config.GetConfig()
-			kubeclientset := kubernetes.NewForConfigOrDie(cfg)
-			initResource, err := kubeclientset.CoreV1().Endpoints(key.Namespace).List(context.Background(), metav1.ListOptions{})
-			if err != nil {
-				w.log.Error(err, "obtaining endpoint")
-			} else {
-				initialRevision = initResource.GetResourceVersion()
-			}
-		}
-
-		go w.newSingleWatch(key, w.events, stopCh, initialRevision)
+		cache.WaitForCacheSync(stopCh, keyCache.HasSynced)
+		w.cache[key] = &cacheEntry{stopCh: stopCh, state: state}
 	}
 }
 
 func (w *watcher) Get(key types.NamespacedName) (runtime.Object, error) {
 	if cacheEntry, exists := w.cache[key]; exists {
-		return cacheEntry.obj, nil
+		item, exists, err := cacheEntry.state.Get(key.String())
+		if err != nil {
+			return nil, err
+		}
+
+		if !exists {
+			return nil, fmt.Errorf("object %v does not exists", key)
+		}
+
+		return item.(runtime.Object), nil
 	}
 
 	return nil, fmt.Errorf("object %v does not exists", key)
@@ -133,59 +126,47 @@ func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.Namespa
 	}
 }
 
-func (w *watcher) newSingleWatch(key types.NamespacedName, eventCh chan Event, stopCh <-chan struct{}, initialRevision string) {
-	listWatch, err := createSingleWatch(key, w.groupKind, w.mgr.GetRESTMapper())
-	if err != nil {
-		w.log.Error(err, "creating new watcher", "key", key)
-		return
+func (w *watcher) newSingleCache(key types.NamespacedName, state cache.Store) cache.Controller {
+	watchOptions := func(options *metav1.ListOptions) {
+		options.FieldSelector = fields.OneTermEqualSelector("metadata.name", key.Name).String()
 	}
+	watchlist := cache.NewFilteredListWatchFromClient(w.restClient, w.plural, key.Namespace, watchOptions)
 
-	retryWatcher, err := apiwatch.NewRetryWatcher(initialRevision, listWatch)
-	if err != nil {
-		w.log.Error(err, "creating new watcher", "key", key)
-		return
-	}
+	return cache.New(&cache.Config{
+		Queue:            cache.NewDeltaFIFO(cache.MetaNamespaceKeyFunc, state),
+		ListerWatcher:    watchlist,
+		ObjectType:       typeFromString(w.plural),
+		FullResyncPeriod: 0,
+		RetryOnError:     true,
 
-	defer func() {
-		w.log.V(2).Info("Stopping watcher", "key", key)
-		retryWatcher.Stop()
-	}()
+		Process: func(obj interface{}) error {
+			/*
+				newest := obj.(cache.Deltas).Newest()
+				if newest.Type != cache.Deleted {
+					//				source.Delete(newest.Object.(runtime.Object))
+				} else {
+						err := downstream.Delete(newest.Object)
+						if err != nil {
+							return err
+						}
+				}*/
 
-	for {
-		select {
-		case event := <-retryWatcher.ResultChan():
-			switch event.Type {
-			case watch.Added, watch.Modified:
-				eventCh <- Event{NamespacedName: key, Type: AddOrUpdateEvent, TypeMeta: convertToTypeMeta(event.Object)}
-				w.cache[key].obj = event.Object
-			case watch.Deleted:
-				eventCh <- Event{NamespacedName: key, Type: RemoveEvent, TypeMeta: convertToTypeMeta(event.Object)}
-				w.cache[key].obj = nil
-			case watch.Error:
-				errObject := apierrors.FromObject(event.Object)
-				statusErr, ok := errObject.(*apierrors.StatusError)
-				if !ok {
-					w.log.Error(errObject, "watching object")
-					continue
-				}
-
-				status := statusErr.ErrStatus
-				w.log.Error(nil, "watching object", "status", status.Reason, "message", status.Message)
-			default:
-			}
-		case <-stopCh:
-			w.log.V(2).Info("Closing object watcher", "key", key)
-			return
-		}
-	}
+			return nil
+		},
+	})
 }
 
-func convertToTypeMeta(obj runtime.Object) metav1.TypeMeta {
-	gvks, _, _ := scheme.ObjectKinds(obj)
-	kind := gvks[0]
-
-	return metav1.TypeMeta{
-		Kind:       kind.Kind,
-		APIVersion: kind.GroupVersion().String(),
+func typeFromString(plural string) runtime.Object {
+	switch plural {
+	case "configmaps":
+		return &kv1.ConfigMap{}
+	case "endpoints":
+		return &kv1.Endpoints{}
+	case "secrets":
+		return &kv1.Secret{}
+	case "services":
+		return &kv1.Service{}
+	default:
+		panic(fmt.Errorf("unexpected type"))
 	}
 }

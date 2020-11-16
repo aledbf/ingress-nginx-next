@@ -20,7 +20,6 @@ import (
 	"os"
 	"time"
 
-	kcorev1 "k8s.io/api/core/v1"
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -79,8 +78,7 @@ func main() {
 
 	profiler.Register(mgr)
 
-	//kubeClient
-	_, err = kubernetes.NewForConfig(ctrl.GetConfigOrDie())
+	kubeClient, err := kubernetes.NewForConfig(ctrl.GetConfigOrDie())
 	if err != nil {
 		setupLog.Error(err, "unable to create an API client")
 		os.Exit(1)
@@ -88,10 +86,10 @@ func main() {
 
 	events := make(chan watch.Event)
 
-	configmapWatcher := watch.SingleObject(kcorev1.SchemeGroupVersion.WithKind("Configmap"), events, mgr)
-	endpointsWatcher := watch.SingleObject(kcorev1.SchemeGroupVersion.WithKind("Endpoints"), events, mgr)
-	secretWatcher := watch.SingleObject(kcorev1.SchemeGroupVersion.WithKind("Secret"), events, mgr)
-	serviceWatcher := watch.SingleObject(kcorev1.SchemeGroupVersion.WithKind("Service"), events, mgr)
+	configmapWatcher := watch.SingleObject("configmaps", events, kubeClient.CoreV1().RESTClient())
+	endpointsWatcher := watch.SingleObject("endpoints", events, kubeClient.CoreV1().RESTClient())
+	secretWatcher := watch.SingleObject("secrets", events, kubeClient.CoreV1().RESTClient())
+	serviceWatcher := watch.SingleObject("services", events, kubeClient.CoreV1().RESTClient())
 
 	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 
