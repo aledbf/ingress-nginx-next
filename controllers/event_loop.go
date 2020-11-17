@@ -18,8 +18,8 @@ package controllers
 import (
 	"context"
 
-	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 
 	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
 	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
@@ -28,8 +28,6 @@ import (
 
 // SyncController reconciles objects used in Ingress instances
 type SyncController struct {
-	Log logr.Logger
-
 	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
 	ConfigmapWatcher watch.Watcher
@@ -45,7 +43,7 @@ func (r *SyncController) Run(ctx context.Context) {
 		select {
 		case evt := <-r.Events:
 			// for now just show a string with event
-			r.Log.V(2).Info("[K8S state change]", "reason", evt)
+			klog.V(2).InfoS("[K8S state change]", "reason", evt)
 
 			switch evt.Kind {
 			case "Configmap":
@@ -63,29 +61,29 @@ func (r *SyncController) Run(ctx context.Context) {
 				// upstreams -> service
 				_, err := r.ServiceWatcher.Get(evt.NamespacedName)
 				if err != nil {
-					r.Log.Error(err, "extracting service information")
+					klog.ErrorS(err, "extracting service information")
 					continue
 				}
 
-				r.Log.Info("Info", "service", evt.NamespacedName)
+				klog.InfoS("Info", "service", evt.NamespacedName)
 
 			case "Endpoints":
 				// upstream servers -> endpoints
 				_, err := r.EndpointsWatcher.Get(evt.NamespacedName)
 				if err != nil {
-					r.Log.Error(err, "extracting endpoints information")
+					klog.ErrorS(err, "extracting endpoints information")
 					continue
 				}
 
-				r.Log.Info("Info", "endpoints", evt.NamespacedName)
+				klog.InfoS("Info", "endpoints", evt.NamespacedName)
 			case "Secret":
 				_, err := r.SecretWatcher.Get(evt.NamespacedName)
 				if err != nil {
-					r.Log.Error(err, "extracting endpoints information")
+					klog.ErrorS(err, "extracting endpoints information")
 					continue
 				}
 
-				r.Log.Info("Info", "secret", evt.NamespacedName)
+				klog.InfoS("Info", "secret", evt.NamespacedName)
 				// supports dynamic updates.
 				// collect all secrets? or just send this one?
 			}

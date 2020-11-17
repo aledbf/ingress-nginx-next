@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/go-logr/logr"
 	kv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -12,8 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-
-	ctrl "sigs.k8s.io/controller-runtime"
 
 	"k8s.io/ingress-nginx-next/pkg/util/reference"
 )
@@ -31,8 +28,6 @@ type watcher struct {
 	events chan Event
 
 	restClient rest.Interface
-
-	log logr.Logger
 
 	references   reference.ObjectRefMap
 	referencesMu *sync.RWMutex
@@ -53,8 +48,6 @@ func SingleObject(plural string, eventCh chan Event, restClient rest.Interface) 
 		events: eventCh,
 
 		restClient: restClient,
-
-		log: ctrl.Log.WithName("watcher").WithName(plural),
 
 		cache: make(map[types.NamespacedName]*cacheEntry),
 
@@ -117,8 +110,6 @@ func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.Namespa
 			continue
 		}
 
-		w.log.Info("deleting", "key", key)
-
 		// close channel (terminates goroutine)
 		close(w.cache[key].stopCh)
 		// delete data
@@ -133,24 +124,14 @@ func (w *watcher) newSingleCache(key types.NamespacedName, state cache.Store) ca
 	watchlist := cache.NewFilteredListWatchFromClient(w.restClient, w.plural, key.Namespace, watchOptions)
 
 	return cache.New(&cache.Config{
-		Queue:            cache.NewDeltaFIFO(cache.MetaNamespaceKeyFunc, state),
+		Queue:            cache.NewDeltaFIFOWithOptions(cache.DeltaFIFOOptions{KeyFunction: cache.MetaNamespaceKeyFunc, KnownObjects: state}),
 		ListerWatcher:    watchlist,
 		ObjectType:       typeFromString(w.plural),
 		FullResyncPeriod: 0,
-		RetryOnError:     true,
+		RetryOnError:     false,
 
 		Process: func(obj interface{}) error {
-			/*
-				newest := obj.(cache.Deltas).Newest()
-				if newest.Type != cache.Deleted {
-					//				source.Delete(newest.Object.(runtime.Object))
-				} else {
-						err := downstream.Delete(newest.Object)
-						if err != nil {
-							return err
-						}
-				}*/
-
+			//newest := obj.(cache.Deltas).Newest()
 			return nil
 		},
 	})

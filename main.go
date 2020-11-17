@@ -25,20 +25,19 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	klog "k8s.io/klog/v2"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"k8s.io/client-go/util/workqueue"
+	klogv1 "k8s.io/klog"
+	klogv2 "k8s.io/klog/v2"
 
 	"k8s.io/ingress-nginx-next/controllers"
+	"k8s.io/ingress-nginx-next/pkg/k8s/client"
 	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
 	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
-	"k8s.io/ingress-nginx-next/pkg/util/profiler"
 	"k8s.io/ingress-nginx-next/pkg/util/signals"
 )
 
 var (
-	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	scheme = runtime.NewScheme()
 )
 
 func init() {
@@ -47,40 +46,34 @@ func init() {
 }
 
 func main() {
-	klog.InitFlags(nil)
+	// initialize klog/v2, can also bind to a local flagset if desired
+	klogv2.InitFlags(nil)
 
-	var (
-		metricsAddr          string
-		enableLeaderElection bool
-		development          bool
-	)
-
-	flag.BoolVar(&development, "development-log", true, "Configure logs in development format.")
-	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
-		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
+	// In this example, we want to show you that all the lines logged
+	// end up in the myfile.log. You do NOT need them in your application
+	// as all these flags are set up from the command line typically
+	flag.Set("alsologtostderr", "true")  // false is default, but this is informative
+	flag.Set("stderrthreshold", "TRACE") // stderrthreshold defaults to ERROR, we don't want anything in stderr
+	// parse klog/v2 flags
 	flag.Parse()
+	// make sure we flush before exiting
+	defer klogv2.Flush()
 
-	ctrl.SetLogger(zap.New(func(o *zap.Options) {
-		o.Development = development
-	}))
+	// BEGIN : hack to redirect klogv1 calls to klog v2
+	// Tell klog NOT to log into STDERR. Otherwise, we risk
+	// certain kinds of API errors getting logged into a directory not
+	// available in a `FROM scratch` Docker container, causing us to abort
+	var klogv1Flags flag.FlagSet
+	klogv1.InitFlags(&klogv1Flags)
+	klogv1Flags.Set("logtostderr", "true")      // By default klog v1 logs to stderr, switch that off
+	klogv1Flags.Set("stderrthreshold", "TRACE") // stderrthreshold defaults to ERROR, use this if you
+	// don't want anything in your stderr
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:             scheme,
-		MetricsBindAddress: metricsAddr,
-		LeaderElection:     enableLeaderElection,
-		Port:               9443,
-	})
+	//profiler.Register(mgr)
+
+	kubeClient, err := kubernetes.NewForConfig(client.GetConfigOrDie())
 	if err != nil {
-		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
-	}
-
-	profiler.Register(mgr)
-
-	kubeClient, err := kubernetes.NewForConfig(ctrl.GetConfigOrDie())
-	if err != nil {
-		setupLog.Error(err, "unable to create an API client")
+		klogv2.ErrorS(err, "unable to create an API client")
 		os.Exit(1)
 	}
 
@@ -94,10 +87,9 @@ func main() {
 	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 
 	ctx := signals.SetupSignalHandler()
+
 	go func() {
 		(&controllers.SyncController{
-			Log: ctrl.Log.WithName("controllers").WithName("event-loop"),
-
 			Dependencies: ingressDependencies,
 
 			ConfigmapWatcher: configmapWatcher,
@@ -109,10 +101,9 @@ func main() {
 		}).Run(ctx)
 	}()
 
-	err = ctrl.NewControllerManagedBy(mgr).
-		For(&networking.Ingress{}).
-		Complete(&controllers.IngressReconciler{
-			Client: mgr.GetClient(),
+	go func() {
+		(&controllers.IngressReconciler{
+			Client: kubeClient,
 
 			Dependencies: ingressDependencies,
 
@@ -120,21 +111,14 @@ func main() {
 			EndpointsWatcher: endpointsWatcher,
 			SecretWatcher:    secretWatcher,
 			ServiceWatcher:   serviceWatcher,
-		})
-	if err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ingress")
-		os.Exit(1)
-	}
 
-	setupLog.Info("starting ingress controller")
-	if err := mgr.Start(ctx); err != nil {
-		setupLog.Error(err, "problem running ingress controller")
-		os.Exit(1)
-	}
+			WorkQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ingress"),
+		}).Run(ctx)
+	}()
 
 	<-ctx.Done()
 	// additional shutdown tasks
 	time.Sleep(10 * time.Second)
 
-	setupLog.Info("done")
+	klogv2.Info("done")
 }

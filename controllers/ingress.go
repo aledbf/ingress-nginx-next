@@ -17,21 +17,29 @@ package controllers
 
 import (
 	"context"
+	"strings"
+	"time"
 
-	networking "k8s.io/api/networking/v1beta1"
+	networkingv1beta1 "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 
+	"k8s.io/ingress-nginx-next/pkg/k8s/informer"
 	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
 	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
 )
 
 // IngressReconciler reconciles a Nginx object
 type IngressReconciler struct {
-	client.Client
+	Client kubernetes.Interface
 
 	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
@@ -39,25 +47,22 @@ type IngressReconciler struct {
 	EndpointsWatcher watch.Watcher
 	SecretWatcher    watch.Watcher
 	ServiceWatcher   watch.Watcher
-}
 
-// Implement reconcile.Reconciler so the controller can reconcile objects
-var _ reconcile.Reconciler = &IngressReconciler{}
+	WorkQueue workqueue.RateLimitingInterface
+
+	state cache.Store
+}
 
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress,verbs=get;list;watch;
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress/status,verbs=get;update;patch
 
-func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	log := log.FromContext(ctx)
-
-	key := req.NamespacedName
-	log.Info("Sync loop", "ingress", key)
+func (r *IngressReconciler) Reconcile(object *networkingv1beta1.Ingress) error {
+	key := types.NamespacedName{Name: object.Name, Namespace: object.Namespace}
 
 	// fetch  from the cache
-	ing := &networking.Ingress{}
-	err := r.Get(ctx, key, ing)
+	ing, err := r.Client.NetworkingV1beta1().Ingresses(key.Namespace).Get(context.TODO(), key.Name, v1.GetOptions{})
 	if errors.IsNotFound(err) {
-		log.Info("Ingress removed", "ingress", key)
+		klog.InfoS("Ingress removed", "ingress", key)
 
 		deps := r.Dependencies[key]
 
@@ -68,10 +73,10 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request
 
 		delete(r.Dependencies, key)
 
-		return reconcile.Result{}, nil
+		return nil
 	}
 	if err != nil {
-		return reconcile.Result{}, err
+		return err
 	}
 
 	deps := ingress.Parse(ing)
@@ -81,8 +86,94 @@ func (r *IngressReconciler) Reconcile(ctx context.Context, req reconcile.Request
 	r.ServiceWatcher.Add(key, deps.Services)
 	r.EndpointsWatcher.Add(key, deps.Endpoints)
 
-	log.Info("Ingress dependencies", "ingress", deps)
+	klog.InfoS("Ingress dependencies", "ingress", deps)
 	r.Dependencies[key] = deps
 
-	return reconcile.Result{}, nil
+	return nil
+}
+
+func (r *IngressReconciler) Run(ctx context.Context) {
+	informerHandlers := cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			r.WorkQueue.Add(obj)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			r.WorkQueue.Add(newObj)
+		},
+		DeleteFunc: func(obj interface{}) {
+			r.WorkQueue.Add(obj)
+		},
+	}
+
+	stop := make(chan struct{})
+	defer close(stop)
+
+	ingressCache := informer.NewLightweightInformer(
+		cache.NewListWatchFromClient(r.Client.NetworkingV1beta1().RESTClient(), "ingresses", "", fields.Everything()),
+		&networkingv1beta1.Ingress{},
+		0,
+		informerHandlers,
+	)
+
+	go ingressCache.Run(stop)
+
+	klog.Info("Waiting for initial cache sync")
+	cache.WaitForCacheSync(stop, ingressCache.HasSynced)
+
+	klog.Info("Starting ingress process loop")
+	wait.Until(
+		func() {
+			// Runs processNextItem in a loop, if it returns false it will
+			// be restarted by wait.Until unless stopCh is sent.
+			for r.processNextItem() {
+			}
+		},
+		time.Second,
+		ctx.Done(),
+	)
+}
+
+func (r *IngressReconciler) processNextItem() bool {
+	obj, quit := r.WorkQueue.Get()
+	if quit {
+		// Exit permanently
+		return false
+	}
+	defer r.WorkQueue.Done(obj)
+
+	ingress, ok := obj.(*networkingv1beta1.Ingress)
+	if !ok {
+		klog.Warning("Error decoding object, invalid type. Dropping")
+		r.WorkQueue.Forget(obj)
+		// short-circuit on this item, but return true to keep processing
+		return true
+	}
+
+	key := types.NamespacedName{Name: ingress.Name, Namespace: ingress.Namespace}
+
+	err := r.Reconcile(ingress)
+	if err == nil {
+		klog.InfoS("Removing from work queue", "ingress", key)
+		r.WorkQueue.Forget(obj)
+	} else if r.WorkQueue.NumRequeues(obj) < 50 {
+		if strings.Contains(err.Error(), "the object has been modified; please apply your changes to the latest version and try again") {
+			klog.V(5).Info("Object modified, requeue for retry", "ingress", key)
+			klog.InfoS("Re-adding %s/%s to work queue", "ingress", key)
+			r.WorkQueue.AddRateLimited(obj)
+		} else if strings.Contains(err.Error(), "not found") {
+			klog.V(5).Info("Object removed, dequeue", "ingress", key)
+			r.WorkQueue.Forget(obj)
+		} else {
+			klog.ErrorS(err, "unexpected error")
+			klog.InfoS("Re-adding to work queue", "ingress", key)
+			r.WorkQueue.AddRateLimited(obj)
+		}
+	} else {
+		klog.InfoS("Requeue limit reached, removing", "ingress", key)
+		r.WorkQueue.Forget(obj)
+		runtime.HandleError(err)
+	}
+
+	// Return true to let the loop process the next item
+	return true
 }
