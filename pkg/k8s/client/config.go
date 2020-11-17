@@ -21,12 +21,20 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// GetConfig ....
+// GetConfig returns a Kubernetes API client config
 func GetConfig() (*rest.Config, error) {
 	kubeCfg := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		clientcmd.NewDefaultClientConfigLoadingRules(),
 		&clientcmd.ConfigOverrides{},
 	)
 
-	return kubeCfg.ClientConfig()
+	cfg, err := kubeCfg.ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: remove after k8s v1.22
+	cfg.WarningHandler = rest.NoWarnings{}
+
+	return cfg, nil
 }

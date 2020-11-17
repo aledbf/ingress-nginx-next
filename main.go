@@ -47,11 +47,10 @@ func init() {
 
 func main() {
 	klog.InitFlags(nil)
+	defer klog.Flush()
 
 	flag.Set("alsologtostderr", "true")
 	flag.Parse()
-
-	defer klog.Flush()
 
 	//profiler.Register(mgr)
 
@@ -108,7 +107,6 @@ func main() {
 
 	<-ctx.Done()
 	// additional shutdown tasks
-	time.Sleep(10 * time.Second)
-
+	time.Sleep(5 * time.Second)
 	klog.Info("done")
 }

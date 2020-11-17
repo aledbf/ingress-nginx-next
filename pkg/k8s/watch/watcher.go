@@ -2,6 +2,7 @@ package watch
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -13,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 
 	"k8s.io/ingress-nginx-next/pkg/util/reference"
 )
@@ -24,8 +26,6 @@ var (
 type Watcher interface {
 	Add(ingress types.NamespacedName, refs []types.NamespacedName)
 	Remove(ingress types.NamespacedName, refs ...types.NamespacedName)
-
-	Get(key types.NamespacedName) (runtime.Object, error)
 }
 
 type watcher struct {
@@ -62,12 +62,15 @@ func SingleObject(gvk schema.GroupVersionKind, eventCh chan Event, restClient re
 	w.informerHandlers = cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			w.store.Add(obj)
+			sendEvent(AddOrUpdateEvent, w.events, obj)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			w.store.Add(newObj)
+			sendEvent(AddOrUpdateEvent, w.events, newObj)
 		},
 		DeleteFunc: func(obj interface{}) {
 			w.store.Delete(obj)
+			sendEvent(RemoveEvent, w.events, obj)
 		},
 	}
 
@@ -92,23 +95,6 @@ func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedN
 
 		cache.WaitForCacheSync(stopCh, keyCache.HasSynced)
 	}
-}
-
-func (w *watcher) Get(key types.NamespacedName) (runtime.Object, error) {
-	if _, exists := w.cache[key]; exists {
-		item, exists, err := w.store.Get(key.String())
-		if err != nil {
-			return nil, err
-		}
-
-		if !exists {
-			return nil, fmt.Errorf("object %v does not exists", key)
-		}
-
-		return item.(runtime.Object), nil
-	}
-
-	return nil, fmt.Errorf("object %v does not exists", key)
 }
 
 func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.NamespacedName) {
@@ -144,4 +130,43 @@ func (w *watcher) newSingleCache(key types.NamespacedName) cache.Controller {
 
 	watchlist := cache.NewFilteredListWatchFromClient(w.restClient, plural, key.Namespace, watchOptions)
 	return NewLightweightInformer(watchlist, obj, 0, w.informerHandlers)
+}
+
+func sendEvent(evtType EventType, eventCh chan Event, obj interface{}) {
+	m, err := getObjectMeta(obj)
+	if err != nil {
+		klog.Error("NO ObjectMetaAccessor: %T", obj)
+		return
+	}
+
+	eventCh <- Event{
+		Type: AddOrUpdateEvent,
+		NamespacedName: types.NamespacedName{
+			Name:      m.GetName(),
+			Namespace: m.GetNamespace(),
+		},
+	}
+}
+
+var (
+	errNotAPIObject = fmt.Errorf("Object is not an API Object")
+)
+
+// getObjectMeta returns the ObjectMeta if its an API object, error otherwise
+func getObjectMeta(obj interface{}) (metav1.Object, error) {
+	if obj == nil {
+		return nil, errNotAPIObject
+	}
+
+	switch t := obj.(type) {
+	case metav1.ObjectMetaAccessor:
+		if reflect.ValueOf(t) == reflect.Zero(reflect.TypeOf(t)) {
+			return nil, errNotAPIObject
+		}
+		if meta := t.GetObjectMeta(); meta != nil {
+			return meta, nil
+		}
+	}
+
+	return nil, errNotAPIObject
 }

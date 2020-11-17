@@ -43,7 +43,7 @@ func (r *SyncController) Run(ctx context.Context) {
 		select {
 		case evt := <-r.Events:
 			// for now just show a string with event
-			klog.V(2).InfoS("[K8S state change]", "reason", evt)
+			klog.InfoS("[K8S state change]", "reason", evt)
 
 			switch evt.Kind {
 			case "Configmap":
@@ -58,30 +58,35 @@ func (r *SyncController) Run(ctx context.Context) {
 				// supports dynamic updates.
 				// collect all upstreams? or just send this one?
 
-				// upstreams -> service
-				_, err := r.ServiceWatcher.Get(evt.NamespacedName)
-				if err != nil {
-					klog.ErrorS(err, "extracting service information")
-					continue
-				}
-
+				/*
+					// upstreams -> service
+					_, err := r.ServiceWatcher.Get(evt.NamespacedName)
+					if err != nil {
+						klog.ErrorS(err, "extracting service information")
+						continue
+					}
+				*/
 				klog.InfoS("Info", "service", evt.NamespacedName)
 
 			case "Endpoints":
 				// upstream servers -> endpoints
-				_, err := r.EndpointsWatcher.Get(evt.NamespacedName)
-				if err != nil {
-					klog.ErrorS(err, "extracting endpoints information")
-					continue
-				}
+				/*
+					_, err := r.EndpointsWatcher.Get(evt.NamespacedName)
+					if err != nil {
+						klog.ErrorS(err, "extracting endpoints information")
+						continue
+					}
+				*/
 
 				klog.InfoS("Info", "endpoints", evt.NamespacedName)
 			case "Secret":
-				_, err := r.SecretWatcher.Get(evt.NamespacedName)
-				if err != nil {
-					klog.ErrorS(err, "extracting endpoints information")
-					continue
-				}
+				/*
+					_, err := r.SecretWatcher.Get(evt.NamespacedName)
+					if err != nil {
+						klog.ErrorS(err, "extracting endpoints information")
+						continue
+					}
+				*/
 
 				klog.InfoS("Info", "secret", evt.NamespacedName)
 				// supports dynamic updates.
