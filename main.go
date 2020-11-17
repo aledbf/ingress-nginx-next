@@ -27,8 +27,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/util/workqueue"
-	klogv1 "k8s.io/klog"
-	klogv2 "k8s.io/klog/v2"
+	"k8s.io/klog/v2"
 
 	"k8s.io/ingress-nginx-next/controllers"
 	"k8s.io/ingress-nginx-next/pkg/k8s/client"
@@ -47,34 +46,24 @@ func init() {
 }
 
 func main() {
-	// initialize klog/v2, can also bind to a local flagset if desired
-	klogv2.InitFlags(nil)
+	klog.InitFlags(nil)
 
-	// In this example, we want to show you that all the lines logged
-	// end up in the myfile.log. You do NOT need them in your application
-	// as all these flags are set up from the command line typically
-	flag.Set("alsologtostderr", "true")  // false is default, but this is informative
-	flag.Set("stderrthreshold", "TRACE") // stderrthreshold defaults to ERROR, we don't want anything in stderr
-	// parse klog/v2 flags
+	flag.Set("alsologtostderr", "true")
 	flag.Parse()
-	// make sure we flush before exiting
-	defer klogv2.Flush()
 
-	// BEGIN : hack to redirect klogv1 calls to klog v2
-	// Tell klog NOT to log into STDERR. Otherwise, we risk
-	// certain kinds of API errors getting logged into a directory not
-	// available in a `FROM scratch` Docker container, causing us to abort
-	var klogv1Flags flag.FlagSet
-	klogv1.InitFlags(&klogv1Flags)
-	klogv1Flags.Set("logtostderr", "true")      // By default klog v1 logs to stderr, switch that off
-	klogv1Flags.Set("stderrthreshold", "TRACE") // stderrthreshold defaults to ERROR, use this if you
-	// don't want anything in your stderr
+	defer klog.Flush()
 
 	//profiler.Register(mgr)
 
-	kubeClient, err := kubernetes.NewForConfig(client.GetConfigOrDie())
+	cfg, err := client.GetConfig()
 	if err != nil {
-		klogv2.ErrorS(err, "unable to create an API client")
+		klog.ErrorS(err, "unable to create an API configuration")
+		os.Exit(1)
+	}
+
+	kubeClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		klog.ErrorS(err, "unable to create an API client")
 		os.Exit(1)
 	}
 
@@ -121,5 +110,5 @@ func main() {
 	// additional shutdown tasks
 	time.Sleep(10 * time.Second)
 
-	klogv2.Info("done")
+	klog.Info("done")
 }
