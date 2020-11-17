@@ -153,11 +153,11 @@ func (r *IngressReconciler) processNextItem() bool {
 		r.WorkQueue.Forget(obj)
 	} else if r.WorkQueue.NumRequeues(obj) < 50 {
 		if strings.Contains(err.Error(), "the object has been modified; please apply your changes to the latest version and try again") {
-			klog.V(5).Info("Object modified, requeue for retry", "ingress", key)
+			klog.V(5).InfoS("Object modified, requeue for retry", "ingress", key)
 			klog.InfoS("Re-adding %s/%s to work queue", "ingress", key)
 			r.WorkQueue.AddRateLimited(obj)
 		} else if strings.Contains(err.Error(), "not found") {
-			klog.V(5).Info("Object removed, dequeue", "ingress", key)
+			klog.V(5).InfoS("Object removed, dequeue", "ingress", key)
 			r.WorkQueue.Forget(obj)
 		} else {
 			klog.ErrorS(err, "unexpected error")

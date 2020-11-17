@@ -22,6 +22,7 @@ import (
 
 	networking "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -79,10 +80,10 @@ func main() {
 
 	events := make(chan watch.Event)
 
-	configmapWatcher := watch.SingleObject("configmaps", events, kubeClient.CoreV1().RESTClient())
-	endpointsWatcher := watch.SingleObject("endpoints", events, kubeClient.CoreV1().RESTClient())
-	secretWatcher := watch.SingleObject("secrets", events, kubeClient.CoreV1().RESTClient())
-	serviceWatcher := watch.SingleObject("services", events, kubeClient.CoreV1().RESTClient())
+	configmapWatcher := watch.SingleObject(schema.FromAPIVersionAndKind("v1", "Configmap"), events, kubeClient.CoreV1().RESTClient())
+	endpointsWatcher := watch.SingleObject(schema.FromAPIVersionAndKind("v1", "Endpoints"), events, kubeClient.CoreV1().RESTClient())
+	secretWatcher := watch.SingleObject(schema.FromAPIVersionAndKind("v1", "Secret"), events, kubeClient.CoreV1().RESTClient())
+	serviceWatcher := watch.SingleObject(schema.FromAPIVersionAndKind("v1", "Service"), events, kubeClient.CoreV1().RESTClient())
 
 	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 

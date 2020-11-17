@@ -2,17 +2,23 @@ package watch
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
-	kv1 "k8s.io/api/core/v1"
+	"github.com/markbates/inflect"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 
 	"k8s.io/ingress-nginx-next/pkg/util/reference"
+)
+
+var (
+	scheme = runtime.NewScheme()
 )
 
 type Watcher interface {
@@ -23,7 +29,7 @@ type Watcher interface {
 }
 
 type watcher struct {
-	plural string
+	gvk schema.GroupVersionKind
 
 	events chan Event
 
@@ -38,9 +44,9 @@ type watcher struct {
 	store cache.Store
 }
 
-func SingleObject(plural string, eventCh chan Event, restClient rest.Interface) Watcher {
+func SingleObject(gvk schema.GroupVersionKind, eventCh chan Event, restClient rest.Interface) Watcher {
 	w := &watcher{
-		plural: plural,
+		gvk: gvk,
 
 		events: eventCh,
 
@@ -54,9 +60,15 @@ func SingleObject(plural string, eventCh chan Event, restClient rest.Interface) 
 	}
 
 	w.informerHandlers = cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { w.store.Add(obj) },
-		UpdateFunc: func(oldObj, newObj interface{}) { w.store.Update(newObj) },
-		DeleteFunc: func(obj interface{}) { w.store.Delete(obj) },
+		AddFunc: func(obj interface{}) {
+			w.store.Add(obj)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			w.store.Add(newObj)
+		},
+		DeleteFunc: func(obj interface{}) {
+			w.store.Delete(obj)
+		},
 	}
 
 	return w
@@ -117,6 +129,7 @@ func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.Namespa
 
 		// close channel (terminates goroutine)
 		close(w.cache[key])
+		// delete data
 		delete(w.cache, key)
 	}
 }
@@ -125,21 +138,10 @@ func (w *watcher) newSingleCache(key types.NamespacedName) cache.Controller {
 	watchOptions := func(options *metav1.ListOptions) {
 		options.FieldSelector = fields.OneTermEqualSelector("metadata.name", key.Name).String()
 	}
-	watchlist := cache.NewFilteredListWatchFromClient(w.restClient, w.plural, key.Namespace, watchOptions)
-	return NewLightweightInformer(watchlist, objectFromString(w.plural), 0, w.informerHandlers)
-}
 
-func objectFromString(plural string) runtime.Object {
-	switch plural {
-	case "configmaps":
-		return &kv1.ConfigMap{}
-	case "endpoints":
-		return &kv1.Endpoints{}
-	case "secrets":
-		return &kv1.Secret{}
-	case "services":
-		return &kv1.Service{}
-	default:
-		panic(fmt.Errorf("unexpected type"))
-	}
+	plural := strings.ToLower(inflect.Pluralize(w.gvk.Kind))
+	obj, _ := scheme.New(w.gvk)
+
+	watchlist := cache.NewFilteredListWatchFromClient(w.restClient, plural, key.Namespace, watchOptions)
+	return NewLightweightInformer(watchlist, obj, 0, w.informerHandlers)
 }
