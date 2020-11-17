@@ -28,12 +28,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/cache"
+	kcache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"k8s.io/ingress-nginx-next/pkg/k8s/cache"
 	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
-	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
 )
 
 // IngressReconciler reconciles a Nginx object
@@ -42,14 +42,14 @@ type IngressReconciler struct {
 
 	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
-	ConfigmapWatcher watch.Watcher
-	EndpointsWatcher watch.Watcher
-	SecretWatcher    watch.Watcher
-	ServiceWatcher   watch.Watcher
+	ConfigmapWatcher cache.Watcher
+	EndpointsWatcher cache.Watcher
+	SecretWatcher    cache.Watcher
+	ServiceWatcher   cache.Watcher
 
 	WorkQueue workqueue.RateLimitingInterface
 
-	state cache.Store
+	state kcache.Store
 }
 
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingress,verbs=get;list;watch;
@@ -92,7 +92,7 @@ func (r *IngressReconciler) Reconcile(object *networkingv1beta1.Ingress) error {
 }
 
 func (r *IngressReconciler) Run(ctx context.Context) {
-	informerHandlers := cache.ResourceEventHandlerFuncs{
+	informerHandlers := kcache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			r.WorkQueue.Add(obj)
 		},
@@ -104,8 +104,8 @@ func (r *IngressReconciler) Run(ctx context.Context) {
 		},
 	}
 
-	ingressCache := watch.NewLightweightInformer(
-		cache.NewListWatchFromClient(r.Client.NetworkingV1beta1().RESTClient(), "ingresses", "", fields.Everything()),
+	ingressCache := cache.NewLightweightInformer(
+		kcache.NewListWatchFromClient(r.Client.NetworkingV1beta1().RESTClient(), "ingresses", "", fields.Everything()),
 		&networkingv1beta1.Ingress{},
 		0,
 		informerHandlers,
@@ -114,7 +114,7 @@ func (r *IngressReconciler) Run(ctx context.Context) {
 	go ingressCache.Run(ctx.Done())
 
 	klog.Info("Waiting for initial cache sync")
-	cache.WaitForCacheSync(ctx.Done(), ingressCache.HasSynced)
+	kcache.WaitForCacheSync(ctx.Done(), ingressCache.HasSynced)
 
 	klog.Info("Starting ingress process loop")
 	wait.Until(

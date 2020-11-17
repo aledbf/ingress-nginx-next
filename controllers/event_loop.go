@@ -21,8 +21,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
+	"k8s.io/ingress-nginx-next/pkg/k8s/cache"
 	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
-	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -30,12 +30,12 @@ import (
 type SyncController struct {
 	Dependencies map[types.NamespacedName]*ingress.Dependencies
 
-	ConfigmapWatcher watch.Watcher
-	EndpointsWatcher watch.Watcher
-	SecretWatcher    watch.Watcher
-	ServiceWatcher   watch.Watcher
+	ConfigmapWatcher cache.Watcher
+	EndpointsWatcher cache.Watcher
+	SecretWatcher    cache.Watcher
+	ServiceWatcher   cache.Watcher
 
-	Events chan watch.Event
+	Events chan cache.Event
 }
 
 func (r *SyncController) Run(ctx context.Context) {

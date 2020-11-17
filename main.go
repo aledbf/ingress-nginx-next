@@ -30,9 +30,9 @@ import (
 	"k8s.io/klog/v2"
 
 	"k8s.io/ingress-nginx-next/controllers"
+	"k8s.io/ingress-nginx-next/pkg/k8s/cache"
 	"k8s.io/ingress-nginx-next/pkg/k8s/client"
 	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
-	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
 	"k8s.io/ingress-nginx-next/pkg/util/signals"
 )
 
@@ -66,12 +66,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	events := make(chan watch.Event)
+	events := make(chan cache.Event)
 
-	configmapWatcher := watch.SingleObject(schema.FromAPIVersionAndKind("v1", "Configmap"), events, kubeClient.CoreV1().RESTClient())
-	endpointsWatcher := watch.SingleObject(schema.FromAPIVersionAndKind("v1", "Endpoints"), events, kubeClient.CoreV1().RESTClient())
-	secretWatcher := watch.SingleObject(schema.FromAPIVersionAndKind("v1", "Secret"), events, kubeClient.CoreV1().RESTClient())
-	serviceWatcher := watch.SingleObject(schema.FromAPIVersionAndKind("v1", "Service"), events, kubeClient.CoreV1().RESTClient())
+	configmapWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Configmap"), events, kubeClient.CoreV1().RESTClient())
+	endpointsWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Endpoints"), events, kubeClient.CoreV1().RESTClient())
+	secretWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Secret"), events, kubeClient.CoreV1().RESTClient())
+	serviceWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Service"), events, kubeClient.CoreV1().RESTClient())
 
 	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 

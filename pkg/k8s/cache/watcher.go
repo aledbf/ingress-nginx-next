@@ -1,4 +1,4 @@
-package watch
+package cache
 
 import (
 	"fmt"
@@ -135,7 +135,7 @@ func (w *watcher) newSingleCache(key types.NamespacedName) cache.Controller {
 func sendEvent(evtType EventType, eventCh chan Event, obj interface{}) {
 	m, err := getObjectMeta(obj)
 	if err != nil {
-		klog.Error("NO ObjectMetaAccessor: %T", obj)
+		klog.Error("Invalid Object: %T", obj)
 		return
 	}
 
