@@ -1,4 +1,4 @@
-package informer
+package watch
 
 import (
 	"fmt"
@@ -9,6 +9,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/cache"
 )
+
+// Source: https://github.com/lyft/clutch/blob/aafa54b2641d1d56d6e909e2140e4b7c490fd181/backend/service/k8s/lightweightinformer.go
 
 type lightweightCacheObject struct {
 	metav1.Object

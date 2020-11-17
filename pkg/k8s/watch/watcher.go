@@ -32,28 +32,34 @@ type watcher struct {
 	references   reference.ObjectRefMap
 	referencesMu *sync.RWMutex
 
-	cache map[types.NamespacedName]*cacheEntry
-}
+	informerHandlers cache.ResourceEventHandlerFuncs
 
-type cacheEntry struct {
-	stopCh chan struct{}
-
-	state cache.Store
+	cache map[types.NamespacedName]chan struct{}
+	store cache.Store
 }
 
 func SingleObject(plural string, eventCh chan Event, restClient rest.Interface) Watcher {
-	return &watcher{
+	w := &watcher{
 		plural: plural,
 
 		events: eventCh,
 
 		restClient: restClient,
 
-		cache: make(map[types.NamespacedName]*cacheEntry),
+		cache: make(map[types.NamespacedName]chan struct{}),
+		store: cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
 
 		references:   reference.NewObjectRefMap(),
 		referencesMu: &sync.RWMutex{},
 	}
+
+	w.informerHandlers = cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(obj interface{}) { w.store.Add(obj) },
+		UpdateFunc: func(oldObj, newObj interface{}) { w.store.Update(newObj) },
+		DeleteFunc: func(obj interface{}) { w.store.Delete(obj) },
+	}
+
+	return w
 }
 
 func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedName) {
@@ -67,19 +73,18 @@ func (w *watcher) Add(fromIngress types.NamespacedName, keys []types.NamespacedN
 		}
 
 		stopCh := make(chan struct{})
-		state := cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc)
+		w.cache[key] = stopCh
 
-		keyCache := w.newSingleCache(key, state)
+		keyCache := w.newSingleCache(key)
 		go keyCache.Run(stopCh)
 
 		cache.WaitForCacheSync(stopCh, keyCache.HasSynced)
-		w.cache[key] = &cacheEntry{stopCh: stopCh, state: state}
 	}
 }
 
 func (w *watcher) Get(key types.NamespacedName) (runtime.Object, error) {
-	if cacheEntry, exists := w.cache[key]; exists {
-		item, exists, err := cacheEntry.state.Get(key.String())
+	if _, exists := w.cache[key]; exists {
+		item, exists, err := w.store.Get(key.String())
 		if err != nil {
 			return nil, err
 		}
@@ -111,33 +116,20 @@ func (w *watcher) Remove(fromIngress types.NamespacedName, keys ...types.Namespa
 		}
 
 		// close channel (terminates goroutine)
-		close(w.cache[key].stopCh)
-		// delete data
+		close(w.cache[key])
 		delete(w.cache, key)
 	}
 }
 
-func (w *watcher) newSingleCache(key types.NamespacedName, state cache.Store) cache.Controller {
+func (w *watcher) newSingleCache(key types.NamespacedName) cache.Controller {
 	watchOptions := func(options *metav1.ListOptions) {
 		options.FieldSelector = fields.OneTermEqualSelector("metadata.name", key.Name).String()
 	}
 	watchlist := cache.NewFilteredListWatchFromClient(w.restClient, w.plural, key.Namespace, watchOptions)
-
-	return cache.New(&cache.Config{
-		Queue:            cache.NewDeltaFIFOWithOptions(cache.DeltaFIFOOptions{KeyFunction: cache.MetaNamespaceKeyFunc, KnownObjects: state}),
-		ListerWatcher:    watchlist,
-		ObjectType:       typeFromString(w.plural),
-		FullResyncPeriod: 0,
-		RetryOnError:     false,
-
-		Process: func(obj interface{}) error {
-			//newest := obj.(cache.Deltas).Newest()
-			return nil
-		},
-	})
+	return NewLightweightInformer(watchlist, objectFromString(w.plural), 0, w.informerHandlers)
 }
 
-func typeFromString(plural string) runtime.Object {
+func objectFromString(plural string) runtime.Object {
 	switch plural {
 	case "configmaps":
 		return &kv1.ConfigMap{}

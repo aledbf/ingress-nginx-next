@@ -32,7 +32,6 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
-	"k8s.io/ingress-nginx-next/pkg/k8s/informer"
 	"k8s.io/ingress-nginx-next/pkg/k8s/ingress"
 	"k8s.io/ingress-nginx-next/pkg/k8s/watch"
 )
@@ -105,20 +104,17 @@ func (r *IngressReconciler) Run(ctx context.Context) {
 		},
 	}
 
-	stop := make(chan struct{})
-	defer close(stop)
-
-	ingressCache := informer.NewLightweightInformer(
+	ingressCache := watch.NewLightweightInformer(
 		cache.NewListWatchFromClient(r.Client.NetworkingV1beta1().RESTClient(), "ingresses", "", fields.Everything()),
 		&networkingv1beta1.Ingress{},
 		0,
 		informerHandlers,
 	)
 
-	go ingressCache.Run(stop)
+	go ingressCache.Run(ctx.Done())
 
 	klog.Info("Waiting for initial cache sync")
-	cache.WaitForCacheSync(stop, ingressCache.HasSynced)
+	cache.WaitForCacheSync(ctx.Done(), ingressCache.HasSynced)
 
 	klog.Info("Starting ingress process loop")
 	wait.Until(
