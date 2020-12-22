@@ -68,10 +68,12 @@ func main() {
 
 	events := make(chan cache.Event)
 
-	configmapWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Configmap"), events, kubeClient.CoreV1().RESTClient())
-	endpointsWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Endpoints"), events, kubeClient.CoreV1().RESTClient())
-	secretWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Secret"), events, kubeClient.CoreV1().RESTClient())
-	serviceWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Service"), events, kubeClient.CoreV1().RESTClient())
+	restClient := kubeClient.CoreV1().RESTClient()
+
+	configmapWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Configmap"), events, restClient)
+	endpointsWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Endpoints"), events, restClient)
+	secretWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Secret"), events, restClient)
+	serviceWatcher := cache.SingleObject(schema.FromAPIVersionAndKind("v1", "Service"), events, restClient)
 
 	ingressDependencies := make(map[types.NamespacedName]*ingress.Dependencies)
 
